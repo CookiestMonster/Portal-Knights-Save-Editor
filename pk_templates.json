@@ -1546,7 +1546,7 @@
     {
       "hash": 1052108554,
       "hash_hex": "0x3EB5E70A",
-      "name": "Nina the Noisy",
+      "name": "Eagle-Eye Elsa",
       "kind": "npc",
       "island": "Portal Knight's Sanctuary"
     },
@@ -3012,35 +3012,35 @@
     {
       "hash": 281349519,
       "hash_hex": "0x10C50D8F",
-      "name": "Chef Riddle",
+      "name": "Nina the Noisy",
       "kind": "quest",
       "island": "Portal Knight's Sanctuary"
     },
     {
       "hash": 558239158,
       "hash_hex": "0x21460DB6",
-      "name": "Ranger Riley (Quest)",
+      "name": "Chef Riddle",
       "kind": "quest",
       "island": "Portal Knight's Sanctuary"
     },
     {
       "hash": 4215223396,
       "hash_hex": "0xFB3F3464",
-      "name": "Mrs. Spade (Quest)",
-      "kind": "quest",
+      "name": "Sous Chef Pepin",
+      "kind": "npc",
       "island": "Portal Knight's Sanctuary"
     },
     {
       "hash": 1562874311,
       "hash_hex": "0x5D2791C7",
-      "name": "Guard Karina",
-      "kind": "npc",
+      "name": "Ranger Riley",
+      "kind": "quest",
       "island": "Portal Knight's Sanctuary"
     },
     {
       "hash": 1455187448,
       "hash_hex": "0x56BC65F8",
-      "name": "Tomekeeper Benjamin",
+      "name": "Guard Karina",
       "kind": "npc",
       "island": "Portal Knight's Sanctuary"
     },
@@ -3054,7 +3054,7 @@
     {
       "hash": 2503620890,
       "hash_hex": "0x953A391A",
-      "name": "Historian Arnaud",
+      "name": "Archmage Dendus III",
       "kind": "npc",
       "island": "Portal Knight's Sanctuary"
     },
@@ -3064,6 +3064,72 @@
       "name": "0x4C58F578",
       "kind": "npc",
       "island": "Portal Knight's Sanctuary"
+    },
+    {
+      "hash": 3314688455,
+      "hash_hex": "0xC59221C7",
+      "name": "Guard Kelly",
+      "kind": "npc"
+    },
+    {
+      "hash": 1516476166,
+      "hash_hex": "0x5A639706",
+      "name": "Archmage Faris XII",
+      "kind": "npc"
+    },
+    {
+      "hash": 2597847934,
+      "hash_hex": "0x9AD8037E",
+      "name": "Ol'Gregg",
+      "kind": "quest"
+    },
+    {
+      "hash": 846901281,
+      "hash_hex": "0x327AB021",
+      "name": "Guard Marvin",
+      "kind": "npc"
+    },
+    {
+      "hash": 1915180741,
+      "hash_hex": "0x722756C5",
+      "name": "Knight-Captain Henri",
+      "kind": "npc"
+    },
+    {
+      "hash": 1559525943,
+      "hash_hex": "0x5CF47A37",
+      "name": "Historian Arnaud",
+      "kind": "npc"
+    },
+    {
+      "hash": 2851007880,
+      "hash_hex": "0xA9EEED88",
+      "name": "Guard Jane",
+      "kind": "npc"
+    },
+    {
+      "hash": 4027303960,
+      "hash_hex": "0xF00BC818",
+      "name": "Mr. Chevelle",
+      "kind": "quest"
+    },
+    {
+      "hash": 4105502558,
+      "hash_hex": "0xF4B4FF5E",
+      "name": "Archmage Lindor IX",
+      "kind": "quest"
+    },
+    {
+      "hash": 3889414259,
+      "hash_hex": "0xE7D3C073",
+      "name": "Tomekeeper Benjamin",
+      "kind": "npc"
+    },
+    {
+      "hash": 2914940143,
+      "hash_hex": "0xADBE74EF",
+      "name": "Heinrich the Hammer",
+      "kind": "npc"
     }
   ]
 }
