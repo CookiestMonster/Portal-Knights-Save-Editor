@@ -1,0 +1,24 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Upload files to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            pk_save_editor.py
+            pk_templates.json
+            item_table_merged.json
