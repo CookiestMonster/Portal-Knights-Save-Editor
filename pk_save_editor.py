@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 r"""
-pk_manager.py - Portal Knights Save Manager (GUI)
+pk_save_editor.py - Portal Knights Save Editor (GUI)
 
 One self-contained program that:
   - finds every save file in Steam Cloud / local / Guest folders
@@ -29,7 +29,7 @@ File naming (16 hex digits):
 Needs: pip install zstandard
        (tkinter is part of standard Python on Windows / most Linux)
 
-Run it with:   python pk_manager.py
+Run it with:   python pk_save_editor.py
 
 Keep item_table_merged.json and (optionally) pk_dict.bin next to this
 script, or let the tool auto-find / extract the dictionary from the game.
@@ -368,6 +368,9 @@ def _reload_template_maps():
     ENEMY_TEMPLATE_CRCS = set(_BUILTIN_ENEMY_CRCS)
     _USER_TEMPLATE_META = {}
     path = _template_json_path()
+    if not os.path.isfile(path):
+        fetch_remote_data_file(TEMPLATE_JSON_FILE)
+        path = _template_json_path()
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
@@ -507,7 +510,7 @@ def save_user_template(crc, name, kind="world", island=None):
         data["templates"].append(rec)
     if "_comment" not in data:
         data["_comment"] = (
-            "TemplateCRC names for pk_manager. "
+            "TemplateCRC names for pk_save_editor. "
             "kind: world|enemy|npc|trader|quest. "
             "island: home island(s) for this template.")
     ordered = {
@@ -957,8 +960,79 @@ def _here(filename):
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
 
 
+# GitHub raw data (cached next to the script after first download)
+GITHUB_RAW_BASE = (
+    "https://raw.githubusercontent.com/CookiestMonster/"
+    "Portal-Knights-Save-Editor/refs/heads/main/"
+)
+REMOTE_DATA_FILES = (
+    "item_table_merged.json",
+    "pk_templates.json",
+)
+
+
+def fetch_remote_data_file(filename, force=False, log_fn=None):
+    """Download a data file from GitHub into the script directory.
+
+    If the local file already exists and force is False, leave it alone
+    (fast startup). Returns (path, status) where status is
+    'cached' | 'downloaded' | 'failed'.
+    """
+    def _log(msg):
+        if log_fn:
+            try:
+                log_fn(msg)
+            except Exception:
+                pass
+
+    filename = os.path.basename(filename)
+    if filename not in REMOTE_DATA_FILES:
+        return _here(filename), "skipped"
+    path = _here(filename)
+    if os.path.isfile(path) and not force:
+        return path, "cached"
+    url = GITHUB_RAW_BASE + filename
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "pk_save_editor/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = resp.read()
+        if not data or len(data) < 2:
+            raise ValueError("empty response")
+        # Basic sanity: JSON should start with { or [
+        head = data.lstrip()[:1]
+        if head not in (b"{", b"["):
+            raise ValueError("response is not JSON")
+        tmp = path + ".download"
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        _log("Downloaded %s (%d bytes) from GitHub" % (filename, len(data)))
+        return path, "downloaded"
+    except Exception as ex:
+        _log("GitHub fetch failed for %s: %s" % (filename, ex))
+        if os.path.isfile(path):
+            return path, "cached"
+        return path, "failed"
+
+
+def ensure_remote_data(force=False, log_fn=None):
+    """Ensure item table + templates are present (download if missing)."""
+    results = {}
+    for name in REMOTE_DATA_FILES:
+        _path, status = fetch_remote_data_file(
+            name, force=force, log_fn=log_fn)
+        results[name] = status
+    return results
+
+
 def item_table_path():
-    """Always use item_table_merged.json next to pk_manager.py.
+    """Always use item_table_merged.json next to pk_save_editor.py.
 
     Never fall back to cwd — that was writing a different file than the
     one the user was watching in Explorer.
@@ -974,6 +1048,9 @@ def item_table():
     global _ITEM_TABLE, _ITEM_TABLE_PATH
     if _ITEM_TABLE is None:
         path = item_table_path()
+        if not os.path.isfile(path):
+            fetch_remote_data_file(ITEM_TABLE_FILE)
+            path = item_table_path()
         try:
             with open(path, "r", encoding="utf-8") as fh:
                 _ITEM_TABLE = json.load(fh)
@@ -3710,7 +3787,7 @@ def _iter_all(nodes):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Portal Knights Save Manager")
+        self.title("Portal Knights Save Editor")
         self.geometry("900x640")
         self.minsize(720, 520)
 
@@ -3742,6 +3819,7 @@ class App(tk.Tk):
         self._build_widgets()
         self.refresh_saves()
         self.auto_extract_dict_if_needed()
+        self.after(100, self._ensure_github_data)
         # Characters should appear without requiring a manual "Refresh list"
         # click. Defer slightly so the window is up and the dict is ready.
         self.after(200, self._autoload_characters)
@@ -3768,6 +3846,28 @@ class App(tk.Tk):
             messagebox.showerror("Unexpected error", str(val))
         except Exception:
             pass
+
+    def _ensure_github_data(self, force=False):
+        """Pull item_table + templates from GitHub if missing (or force)."""
+        def work():
+            results = ensure_remote_data(force=force, log_fn=self.log)
+            def done():
+                if force or any(s == "downloaded" for s in results.values()):
+                    invalidate_item_cache()
+                    try:
+                        _reload_template_maps()
+                    except Exception:
+                        pass
+                parts = ["%s=%s" % (k, v) for k, v in results.items()]
+                self.log("Data files: " + ", ".join(parts))
+                if force:
+                    messagebox.showinfo(
+                        "Data refresh",
+                        "GitHub data:\n  " + "\n  ".join(parts) +
+                        "\n\nCached next to the script for offline use.",
+                        parent=self)
+            self.after(0, done)
+        threading.Thread(target=work, daemon=True).start()
 
     def auto_extract_dict_if_needed(self):
         """If pk_dict.bin isn't already sitting somewhere we'd find it,
@@ -4007,6 +4107,10 @@ class App(tk.Tk):
         self.world_map_btn.pack(side="left", padx=4)
         ttk.Button(world_actions2, text="Templates…",
                    command=self.open_template_editor).pack(side="left", padx=4)
+        ttk.Button(
+            world_actions2, text="Refresh data…",
+            command=lambda: self._ensure_github_data(force=True),
+        ).pack(side="left", padx=4)
         ttk.Label(
             world_actions2,
             text="*Chests = inventory entities. Map = top-down X/Z.",
@@ -5876,44 +5980,11 @@ class App(tk.Tk):
 
                     def on_pick(rec):
                         crc = _as_u32((rec or {}).get("hash"))
-                        # Name with no hash: bind THIS slot's hash to that name
                         if crc is None:
-                            if cur_crc is None:
-                                messagebox.showerror(
-                                    "No hash",
-                                    "That name has no hash and this slot has "
-                                    "no II either.",
-                                    parent=dlg)
-                                return
-                            nm = (rec.get("name") or "").strip()
-                            if not nm:
-                                return
-                            if not messagebox.askyesno(
-                                    "Bind hash to name",
-                                    "“%s” has no hash in the table.\n\n"
-                                    "Bind this slot’s hash 0x%08X to that "
-                                    "name in item_table_merged.json?\n"
-                                    "(Does not change the save — only the "
-                                    "label.)" % (nm, cur_crc),
-                                    parent=dlg):
-                                return
-                            try:
-                                path_w = update_item_table_entry(
-                                    cur_crc, name=nm,
-                                    category=rec.get("category"),
-                                    confidence="exact",
-                                    log_fn=self.log)
-                            except Exception as ex:
-                                messagebox.showerror("JSON update failed",
-                                                     str(ex), parent=dlg)
-                                return
-                            self.log("ITEM TABLE JSON: 0x%08X → %r\n  %s"
-                                     % (cur_crc, nm, path_w))
-                            messagebox.showinfo(
-                                "Item table JSON updated",
-                                _item_table_write_report(path_w, cur_crc, nm),
+                            messagebox.showerror(
+                                "No hash",
+                                "That table row has no item hash.",
                                 parent=dlg)
-                            refresh_labels()
                             return
                         # Re-parse fresh doc from container for safe edit
                         try:
@@ -5952,7 +6023,7 @@ class App(tk.Tk):
                             # container can be mid-scan / dctx busy).
                             apply_slot_display(_ak, si, crc, fields)
 
-                    # item picker — include null-hash names so they can be bound
+                    # item picker
                     pick = tk.Toplevel(dlg)
                     pick.title("Pick item for slot %d" % (si + 1))
                     pick.geometry("640x420")
@@ -5961,7 +6032,7 @@ class App(tk.Tk):
                                                             pady=6)
                     ttk.Label(
                         pick,
-                        text="Rows marked [no hash] assign this slot’s CRC "
+                        text="Pick an item with a known hash. "
                              "to that name in the JSON (label fix).",
                         foreground="#555",
                     ).pack(anchor="w", padx=8)
@@ -6115,111 +6186,9 @@ class App(tk.Tk):
             tree.bind("<Double-Button-1>",
                       lambda e, tw=tree: copy_hash(tw, quiet=True))
 
-            def correct_name(tree_w=tree):
-                sel = tree_w.selection()
-                if not sel or sel[0] not in meta:
-                    return
-                _ak, _si, _entry, fields, _arr = meta[sel[0]]
-                ii = fields.get("II")
-                crc = _as_u32(ii.get("value")) if ii else None
-                if crc is None:
-                    messagebox.showerror("No hash", "Slot has no II.",
-                                         parent=dlg)
-                    return
-                rec = item_record_for_crc(crc)
-                cur_name = (rec or {}).get("name") or ""
-                cd = tk.Toplevel(dlg)
-                cd.title("Correct table name — slot hash 0x%08X" % crc)
-                cd.geometry("640x420")
-                ttk.Label(
-                    cd,
-                    text="Bind this slot’s hash 0x%08X (%d) to a name in "
-                         "item_table_merged.json.\n"
-                         "Current label: %s  ·  Search and double-click "
-                         "or Use selected."
-                         % (crc, crc, cur_name or "(unknown)"),
-                    foreground="#333",
-                ).pack(anchor="w", padx=8, pady=6)
-                qvar = tk.StringVar()
-                ttk.Entry(cd, textvariable=qvar).pack(fill="x", padx=8, pady=4)
-                lb = tk.Listbox(cd, font=("Courier New", 9))
-                lb.pack(fill="both", expand=True, padx=8, pady=4)
-                found_rows = []
 
-                def refresh(*_a):
-                    lb.delete(0, "end")
-                    del found_rows[:]
-                    q = (qvar.get() or "").strip().lower()
-                    for row in item_table():
-                        if row.get("category") is None:
-                            continue
-                        if row.get("confidence") == "unmatched":
-                            continue
-                        name = row.get("name") or ""
-                        cat = row.get("category") or ""
-                        if q and q not in _s(name).lower() and q not in _s(cat).lower():
-                            hh = (row.get("hash_hex") or "")
-                            if (q not in _s(hh).lower()
-                                    and q not in str(row.get("hash") or "")):
-                                continue
-                        found_rows.append(row)
-                        h = _as_u32(row.get("hash"))
-                        if h is None:
-                            lb.insert("end", "%-36s  %-12s  [no hash]" % (
-                                name[:36], cat[:12]))
-                        else:
-                            mark = " ← current" if h == crc else ""
-                            lb.insert("end", "%-36s  %-12s  0x%08X%s" % (
-                                name[:36], cat[:12], h, mark))
-                        if len(found_rows) >= 300:
-                            break
-
-                def apply_sel(_evt=None):
-                    sel2 = lb.curselection()
-                    if not sel2:
-                        return
-                    row = found_rows[sel2[0]]
-                    nm = (row.get("name") or "").strip()
-                    if not nm:
-                        return
-                    cat = row.get("category")
-                    if not messagebox.askyesno(
-                            "Confirm",
-                            "Write to item_table_merged.json:\n\n"
-                            "  0x%08X  →  %s\n\n"
-                            "(Does not change the save — only the label.)"
-                            % (crc, nm),
-                            parent=cd):
-                        return
-                    try:
-                        path_w = update_item_table_entry(
-                            crc, name=nm, category=cat,
-                            confidence="exact", log_fn=self.log)
-                    except Exception as ex:
-                        messagebox.showerror("JSON update failed", str(ex),
-                                             parent=cd)
-                        return
-                    self.log("ITEM TABLE JSON: 0x%08X → %r\n  %s"
-                             % (crc, nm, path_w))
-                    messagebox.showinfo(
-                        "Item table JSON updated",
-                        _item_table_write_report(path_w, crc, nm),
-                        parent=cd)
-                    cd.destroy()
-                    refresh_labels()
-
-                qvar.trace_add("write", refresh)
-                lb.bind("<Double-1>", apply_sel)
-                ttk.Button(cd, text="Use selected", command=apply_sel).pack(
-                    pady=6)
-                refresh()
-
-            bf = ttk.Frame(frame)
-            bf.pack(fill="x", padx=4, pady=4)
             ttk.Button(bf, text="Change item…",
                        command=change_item).pack(side="left")
-            ttk.Button(bf, text="Correct table name…",
-                       command=correct_name).pack(side="left", padx=6)
             ttk.Button(bf, text="Edit stack…",
                        command=edit_stack).pack(side="left", padx=6)
             ttk.Button(bf, text="Copy hash",
@@ -8836,91 +8805,6 @@ class CharacterEditor(tk.Toplevel):
             return
         self.app.open_field_editor_for(self.e, self.doc, self.kind)
 
-    def _correct_item_table_dialog(self, crc):
-        """Let the user fix a wrong name/category in item_table_merged.json.
-
-        Does not change the save — only the shared item dictionary so
-        every view shows the corrected label for this II hash.
-        """
-        crc = _as_u32(crc)
-        if crc is None:
-            messagebox.showerror(
-                "No hash",
-                "This slot has no item hash (II is empty).",
-                parent=self)
-            return
-        rec = item_record_for_crc(crc)
-        cur_name = (rec or {}).get("name") or ""
-        cur_cat = (rec or {}).get("category") or ""
-
-        dlg = tk.Toplevel(self)
-        dlg.title("Correct item table entry")
-        dlg.geometry("480x220")
-        dlg.transient(self)
-        ttk.Label(
-            dlg,
-            text="Hash 0x%08X  (%d)\n"
-                 "This updates item_table_merged.json only — not the save."
-                 % (crc, crc),
-            justify="left",
-        ).pack(anchor="w", padx=12, pady=(12, 6))
-
-        form = ttk.Frame(dlg)
-        form.pack(fill="x", padx=12)
-        ttk.Label(form, text="Name:").grid(row=0, column=0, sticky="w",
-                                           pady=3)
-        name_var = tk.StringVar(value=cur_name)
-        ttk.Entry(form, textvariable=name_var, width=48).grid(
-            row=0, column=1, sticky="we", pady=3)
-        ttk.Label(form, text="Category:").grid(row=1, column=0, sticky="w",
-                                               pady=3)
-        cat_var = tk.StringVar(value=cur_cat)
-        ttk.Entry(form, textvariable=cat_var, width=48).grid(
-            row=1, column=1, sticky="we", pady=3)
-        form.columnconfigure(1, weight=1)
-
-        ttk.Label(
-            dlg,
-            text="Example: rename “Bumblebee Gloves” → “Bumblebee Pants” "
-                 "when the hash is right but the label is wrong.",
-            foreground="#555", wraplength=440, justify="left",
-        ).pack(anchor="w", padx=12, pady=6)
-
-        def apply():
-            new_name = name_var.get().strip()
-            if not new_name:
-                messagebox.showerror("Name required",
-                                     "Enter the correct item name.",
-                                     parent=dlg)
-                return
-            new_cat = cat_var.get().strip() or None
-            try:
-                path = update_item_table_entry(
-                    crc, name=new_name, category=new_cat,
-                    confidence="exact",
-                    log_fn=self.app.log)
-            except Exception as ex:
-                messagebox.showerror("Save failed", str(ex), parent=dlg)
-                return
-            self.app.log(
-                "ITEM TABLE JSON: 0x%08X → %r (cat=%s)\n  %s"
-                % (crc, new_name, new_cat, path))
-            messagebox.showinfo(
-                "Item table JSON updated",
-                _item_table_write_report(path, crc, new_name),
-                parent=self)
-            dlg.destroy()
-            try:
-                self.reload()
-            except Exception:
-                pass
-
-        bf = ttk.Frame(dlg)
-        bf.pack(fill="x", padx=12, pady=10)
-        ttk.Button(bf, text="Save correction", command=apply).pack(
-            side="left")
-        ttk.Button(bf, text="Cancel", command=dlg.destroy).pack(
-            side="right")
 
     def _rebuild_all_tabs(self):
         """Destroy and rebuild every tab body (preserves notebook objects)."""
@@ -9163,8 +9047,7 @@ class CharacterEditor(tk.Toplevel):
                 title="Pick item for %s" % EQUIP_SLOT_NAMES[si],
                 categories=cats,
                 on_pick=lambda rec, wk=write_key, s=si, e=entry:
-                    self._set_equip_slot(wk, s, e, rec),
-                bind_crc=bind)
+                    self._set_equip_slot(wk, s, e, rec))
 
         def clear_selected():
             sel = tree.selection()
@@ -9187,32 +9070,9 @@ class CharacterEditor(tk.Toplevel):
             if ok:
                 self.reload()
 
-        def correct_table_name():
-            sel = tree.selection()
-            if not sel or sel[0] not in row_meta:
-                return
-            si, entry, write_key = row_meta[sel[0]]
-            if entry is None:
-                return
-            fields = item_entry_fields(entry)
-            ii = fields.get("II")
-            if ii is None:
-                messagebox.showinfo("No item", "Select a filled slot.",
-                                    parent=self)
-                return
-            crc = _as_u32(ii.get("value"))
-            if crc is None:
-                messagebox.showerror(
-                    "No hash",
-                    "This slot's II value is empty/null.",
-                    parent=self)
-                return
-            self._correct_item_table_dialog(crc)
 
         ttk.Button(btns, text="Change item…",
                    command=change_selected).pack(side="left")
-        ttk.Button(btns, text="Correct table name…",
-                   command=correct_table_name).pack(side="left", padx=6)
         ttk.Button(btns, text="Clear slot",
                    command=clear_selected).pack(side="left", padx=6)
         tree.bind("<Double-1>", lambda _e: change_selected())
@@ -9941,8 +9801,7 @@ class CharacterEditor(tk.Toplevel):
                 title="Change item in slot %d" % (si + 1),
                 categories=None,
                 on_pick=lambda rec: self._set_bag_item(
-                    array_key, si, entry, fields, rec),
-                bind_crc=bind)
+                    array_key, si, entry, fields, rec))
 
         def edit_stack():
             sel = tree.selection()
@@ -10025,29 +9884,9 @@ class CharacterEditor(tk.Toplevel):
                 on_pick=lambda rec: self._set_equip_slot(
                     array_key, si, None, rec))
 
-        def correct_table_name():
-            sel = tree.selection()
-            if not sel or sel[0] not in row_meta:
-                return
-            si, entry, fields = row_meta[sel[0]]
-            ii = fields.get("II")
-            if ii is None:
-                messagebox.showinfo("No item", "Select a filled slot.",
-                                    parent=self)
-                return
-            crc = _as_u32(ii.get("value"))
-            if crc is None:
-                messagebox.showerror(
-                    "No hash",
-                    "This slot's II value is empty/null.",
-                    parent=self)
-                return
-            self._correct_item_table_dialog(crc)
 
         ttk.Button(btns, text="Change item…",
                    command=change_item).pack(side="left")
-        ttk.Button(btns, text="Correct table name…",
-                   command=correct_table_name).pack(side="left", padx=6)
         ttk.Button(btns, text="Edit stack…",
                    command=edit_stack).pack(side="left", padx=6)
         ttk.Button(btns, text="Delete selected",
@@ -10253,24 +10092,22 @@ class CharacterEditor(tk.Toplevel):
     # -- shared item picker --------------------------------------------
 
     def _item_picker(self, title, categories, on_pick, bind_crc=None):
-        """Item search dialog.
+        """Searchable item list. Hashes are read-only; only rows with a hash are shown.
 
-        bind_crc: if set, choosing a [no hash] name binds that CRC to the
-        name in item_table_merged.json instead of writing the save.
+        bind_crc is ignored (item-table hash binding was removed — hashes are authoritative).
         """
         dlg = tk.Toplevel(self)
         dlg.title(title)
-        dlg.geometry("720x480")
-        qvar = tk.StringVar()
-        ttk.Entry(dlg, textvariable=qvar).pack(fill="x", padx=10, pady=8)
+        dlg.geometry("520x420")
         ttk.Label(
             dlg,
-            text="0xHASH = place into save.  [no hash] = bind name to "
-                 "current slot CRC in JSON (label fix only).",
-            foreground="#555",
-        ).pack(anchor="w", padx=10)
+            text="Select an item (hash is fixed in the item table). "
+                 "Double-click or Use selected.",
+        ).pack(anchor="w", padx=8, pady=6)
+        qvar = tk.StringVar()
+        ttk.Entry(dlg, textvariable=qvar).pack(fill="x", padx=8, pady=4)
         lb = tk.Listbox(dlg, font=("Courier New", 9))
-        lb.pack(fill="both", expand=True, padx=10, pady=4)
+        lb.pack(fill="both", expand=True, padx=8, pady=4)
         rows = []
 
         def refresh(*_a):
@@ -10278,29 +10115,30 @@ class CharacterEditor(tk.Toplevel):
             del rows[:]
             q = (qvar.get() or "").strip().lower()
             n = 0
+            cat_filter = None
+            if categories and categories != ("*",):
+                try:
+                    cat_filter = set(categories)
+                except TypeError:
+                    cat_filter = None
             for rec in item_table():
-                if rec.get("category") is None:
+                if not isinstance(rec, dict):
                     continue
-                if rec.get("confidence") == "unmatched":
-                    continue
-                if categories and rec.get("category") not in categories:
-                    continue
-                name = rec.get("name") or ""
-                cat = rec.get("category") or ""
-                if q and q not in _s(name).lower() and q not in _s(cat).lower():
-                    hh = (rec.get("hash_hex") or "")
-                    if q not in _s(hh).lower() and q not in str(rec.get("hash") or ""):
-                        continue
                 h = _as_u32(rec.get("hash"))
-                rows.append(rec)
                 if h is None:
-                    lb.insert("end", "%-36s  %-14s  [no hash]" % (
-                        name[:36], cat[:14]))
-                else:
-                    lb.insert("end", "%-36s  %-14s  0x%08X" % (
-                        name[:36], cat[:14], h))
+                    continue
+                name = str(rec.get("name") or "")
+                cat = str(rec.get("category") or "")
+                if cat_filter is not None and cat not in cat_filter:
+                    continue
+                blob = ("%s %s %s %08x" % (name, cat, h, h)).lower()
+                if q and q not in blob:
+                    continue
+                rows.append(rec)
+                lb.insert("end", "%-36s  %-14s  0x%08X" % (
+                    name[:36], cat[:14], h))
                 n += 1
-                if n >= 300:
+                if n >= 400:
                     break
 
         def pick(_evt=None):
@@ -10310,40 +10148,10 @@ class CharacterEditor(tk.Toplevel):
             rec = rows[sel[0]]
             h = _as_u32(rec.get("hash"))
             if h is None:
-                if bind_crc is None:
-                    messagebox.showerror(
-                        "No hash",
-                        "This name has no hash. Open Correct table name… "
-                        "on a filled slot, or pick a row that shows 0x…",
-                        parent=dlg)
-                    return
-                nm = (rec.get("name") or "").strip()
-                if not messagebox.askyesno(
-                        "Bind hash to name",
-                        "Bind 0x%08X → “%s” in item_table_merged.json?"
-                        % (bind_crc, nm), parent=dlg):
-                    return
-                try:
-                    path_w = update_item_table_entry(
-                        bind_crc, name=nm,
-                        category=rec.get("category"),
-                        confidence="exact",
-                        log_fn=self.app.log)
-                except Exception as ex:
-                    messagebox.showerror("JSON update failed", str(ex),
-                                         parent=dlg)
-                    return
-                self.app.log("ITEM TABLE JSON: 0x%08X → %r\n  %s"
-                             % (bind_crc, nm, path_w))
-                messagebox.showinfo(
-                    "Item table JSON updated",
-                    _item_table_write_report(path_w, bind_crc, nm),
+                messagebox.showerror(
+                    "No hash",
+                    "This table row has no hash.",
                     parent=dlg)
-                dlg.destroy()
-                try:
-                    self.reload()
-                except Exception:
-                    pass
                 return
             dlg.destroy()
             try:
@@ -10355,6 +10163,8 @@ class CharacterEditor(tk.Toplevel):
         lb.bind("<Double-1>", pick)
         ttk.Button(dlg, text="Use selected", command=pick).pack(pady=8)
         refresh()
+
+
 
 
 def main():
