@@ -223,6 +223,7 @@ FILE_TYPE_CHAR = 0x01
 FILE_TYPE_CHAR_BAK = 0x02
 FILE_TYPE_UNIVERSE = 0x03
 FILE_TYPE_WORLD = 0x04
+FILE_TYPE_SERVER_SESSION = 0x05  # dedicated server session; auto-generated
 FILE_TYPE_MISC = 0x06
 
 # Island / world location codes (last 3–5 hex digits of a 04xxxxxxxxxxxxxxxx file).
@@ -3485,6 +3486,10 @@ def parse_save_filename(fname):
         label = "%s U%d · %s" % (tag, universe, name or ("0x%X" % loc))
         return {"type": "world", "universe": universe, "location": loc,
                 "location_name": name, "label": label, "community": community}
+    if ftype == FILE_TYPE_SERVER_SESSION and not community:
+        return {"type": "server_session", "universe": None, "location": None,
+                "location_name": None, "community": False,
+                "label": "Dedicated server session (0500…) — auto-generated"}
     if ftype == FILE_TYPE_MISC and not community:
         return {"type": "misc", "universe": None, "location": None,
                 "location_name": None, "community": False,
@@ -5492,7 +5497,7 @@ class App(tk.Tk):
                 ("%.1f" % pos[2]) if pos[2] is not None else "?",
                 chest["item_count"],
                 ", ".join(arr_names),
-                "%08X" % e["id"],
+                "%08X" % (int(e.get("id", 0)) & 0xFFFFFFFF),
             ))
             row_data[iid] = (e, doc, kind, chest, container)
             chest_item_index.append(_chest_items(chest))
@@ -6257,7 +6262,7 @@ class App(tk.Tk):
                 ("%.1f" % pos[1]) if pos[1] is not None else "?",
                 ("%.1f" % pos[2]) if pos[2] is not None else "?",
                 (sign.get("text") or "")[:80],
-                "%08X" % e["id"],
+                "%08X" % (int(e.get("id", 0)) & 0xFFFFFFFF),
             ))
             row_data[iid] = (e, doc, kind, sign, container)
 
@@ -6778,132 +6783,169 @@ class App(tk.Tk):
             ).pack(anchor="w", padx=8)
 
             def run():
-                crcs = parse_crc_list(txt.get("1.0", "end"))
-                if not crcs:
-                    messagebox.showerror(
-                        "No CRCs",
-                        "No TemplateCRC values found in the paste.",
-                        parent=bd)
-                    return
-                # Sort NPC slots by position for a stable walk order
-                def pos_key(item):
-                    pos = item[1]["npc"].get("pos") or (0, 0, 0)
-                    return (pos[0], pos[2], pos[1])
-                slots = sorted(npc_only, key=pos_key)
-                n = min(len(slots), len(crcs))
-                if len(crcs) > len(slots):
-                    extra = len(crcs) - len(slots)
+                try:
+                    crcs = parse_crc_list(txt.get("1.0", "end"))
+                    if not crcs:
+                        messagebox.showerror(
+                            "No CRCs",
+                            "No TemplateCRC values found in the paste.",
+                            parent=bd)
+                        return
+                    # Sort NPC slots by position for a stable walk order
+                    def pos_key(item):
+                        pos = item[1]["npc"].get("pos") or (0, 0, 0)
+                        try:
+                            return (float(pos[0]), float(pos[2]), float(pos[1]))
+                        except Exception:
+                            return (0.0, 0.0, 0.0)
+                    slots = sorted(npc_only, key=pos_key)
+                    n = min(len(slots), len(crcs))
+                    if len(crcs) > len(slots):
+                        extra = len(crcs) - len(slots)
+                        if not messagebox.askyesno(
+                                "Not enough NPC slots",
+                                "List has %s templates, world has %s NPC slots.\n"
+                                "Only the first %s will be assigned (%s left over).\n\n"
+                                "Continue?" % (len(crcs), len(slots), n, extra),
+                                parent=bd):
+                            return
+                    elif len(slots) > len(crcs):
+                        if not messagebox.askyesno(
+                                "Extra NPC slots",
+                                "World has %s NPCs, list has %s templates.\n"
+                                "First %s slots will be replaced; the rest stay."
+                                % (len(slots), len(crcs), n),
+                                parent=bd):
+                            return
                     if not messagebox.askyesno(
-                            "Not enough NPC slots",
-                            "List has %d templates, world has %d NPC slots.\n"
-                            "Only the first %d will be assigned (%d left over).\n\n"
-                            "Continue?" % (len(crcs), len(slots), n, extra),
+                            "Confirm bulk assign",
+                            "Assign %s TemplateCRC(s) onto NPC slots in\n  %s\n\n"
+                            "A .bak is made on the first write.\n"
+                            "Fully quit the game before loading this world."
+                            % (n, os.path.basename(path)),
                             parent=bd):
                         return
-                elif len(slots) > len(crcs):
-                    if not messagebox.askyesno(
-                            "Extra NPC slots",
-                            "World has %d NPCs, list has %d templates.\n"
-                            "First %d slots will be replaced; the rest stay."
-                            % (len(slots), len(crcs), n),
-                            parent=bd):
-                        return
-                if not messagebox.askyesno(
-                        "Confirm bulk assign",
-                        "Assign %d TemplateCRC(s) onto NPC slots in\n  %s\n\n"
-                        "A .bak is made on the first write.\n"
-                        "Fully quit the game before loading this world."
-                        % (n, os.path.basename(path)),
-                        parent=bd):
-                    return
 
-                # Grid origin = first slot position
-                origin = slots[0][1]["npc"].get("pos") or (0, 60, 0)
-                ox, oy, oz = origin
-                cols = max(8, int(n ** 0.5) + 1)
-                spacing = 2.0
-
-                ok_n = 0
-                fail = []
-                for i in range(n):
-                    iid, data = slots[i]
-                    e = data["e"]
-                    container = data["container"]
-                    new_crc = crcs[i]
-                    target_pos = data["npc"].get("pos")
-                    self.savefile_path.set(path)
-                    self.container = container
+                    origin = slots[0][1]["npc"].get("pos") or (0, 60, 0)
                     try:
-                        fresh_doc, fresh_kind = unwrap(
-                            container.chunk(e), self.dctx)
-                        fresh_nodes, _ = bson_parse(bytearray(fresh_doc))
-                    except Exception as ex:
-                        fail.append((i, str(ex)))
-                        continue
-                    # Find matching NPC entity + TemplateCRC (+ Position)
-                    target_crc_node = None
-                    target_pos_nodes = None  # (x_node, y_node, z_node)
-                    for ent in iter_entities(fresh_nodes):
-                        has_npc = any(
-                            n["key"] == "NPC Control Component"
-                            for n in _walk([ent]))
-                        if not has_npc:
-                            continue
-                        pos = _entity_position(ent)
-                        if target_pos and pos:
-                            if (abs(pos[0] - target_pos[0]) > 0.05 or
-                                    abs(pos[2] - target_pos[2]) > 0.05):
-                                continue
-                        elif target_pos:
-                            continue
-                        for n in _walk([ent]):
-                            if (n["key"] == "TemplateCRC"
-                                    and n.get("value") is not None):
-                                target_crc_node = n
-                        if layout_var.get():
-                            # dig out Position x/y/z nodes
-                            for n in _walk([ent]):
-                                if n["key"] == "Position" and n.get("children"):
-                                    xyz = {}
-                                    for ch in n["children"]:
-                                        if ch["key"] in ("x", "y", "z"):
-                                            xyz[ch["key"]] = ch
-                                    if len(xyz) == 3:
-                                        target_pos_nodes = xyz
-                                    break
-                        break
-                    if target_crc_node is None:
-                        fail.append((i, "TemplateCRC not found"))
-                        continue
-                    edits = [(target_crc_node, new_crc)]
-                    if layout_var.get() and target_pos_nodes:
-                        col = i % cols
-                        row = i // cols
-                        nx = ox + col * spacing
-                        nz = oz + row * spacing
-                        edits.append((target_pos_nodes["x"], float(nx)))
-                        edits.append((target_pos_nodes["z"], float(nz)))
-                        # keep y
-                    ok = self.commit_bson_edits(
-                        e, fresh_doc, fresh_kind, edits,
-                        verify_label="bulk NPC assign")
-                    if ok:
-                        ok_n += 1
-                        self.log(
-                            "Bulk NPC [%d] → 0x%08X (%s)"
-                            % (i + 1, new_crc, template_label(new_crc)))
-                    else:
-                        fail.append((i, "write/verify failed"))
+                        ox, oy, oz = float(origin[0]), float(origin[1]), float(origin[2])
+                    except Exception:
+                        ox, oy, oz = 0.0, 60.0, 0.0
+                    cols = max(8, int(n ** 0.5) + 1)
+                    spacing = 2.0
 
-                msg = "Assigned %d / %d templates." % (ok_n, n)
-                if fail:
-                    msg += "\n\nFailures (%d):\n" % len(fail)
-                    msg += "\n".join(
-                        "  #%d: %s" % (i + 1, err) for i, err in fail[:8])
-                messagebox.showinfo("Bulk assign done", msg, parent=bd)
-                bd.destroy()
-                dlg.destroy()
-                self.open_world_npcs()
+                    ok_n = 0
+                    fail = []
+                    # Always re-load container from disk so multi-NPC BKCK
+                    # chunks see previous writes in this batch.
+                    for i in range(n):
+                        iid, data = slots[i]
+                        e = data["e"]
+                        new_crc = int(crcs[i]) & 0xFFFFFFFF
+                        target_pos = data["npc"].get("pos")
+                        try:
+                            container = load_container(path)
+                            self.savefile_path.set(path)
+                            self.container = container
+                            # re-find entry by id (offsets change after rewrite)
+                            eid = e.get("id") if isinstance(e, dict) else None
+                            entry = None
+                            for ent in container.entries:
+                                if ent.get("id") == eid:
+                                    entry = ent
+                                    break
+                            if entry is None:
+                                fail.append((i, "entry id %s not found after reload" % eid))
+                                continue
+                            fresh_doc, fresh_kind = unwrap(
+                                container.chunk(entry), self.dctx)
+                            fresh_nodes, _ = bson_parse(bytearray(fresh_doc))
+                        except Exception as ex:
+                            fail.append((i, "reload/parse: %s" % ex))
+                            continue
+                        target_crc_node = None
+                        target_pos_nodes = None
+                        for ent in iter_entities(fresh_nodes):
+                            has_npc = any(
+                                n["key"] == "NPC Control Component"
+                                for n in _walk([ent]))
+                            if not has_npc:
+                                continue
+                            pos = _entity_position(ent)
+                            if target_pos and pos:
+                                try:
+                                    if (abs(float(pos[0]) - float(target_pos[0])) > 0.05 or
+                                            abs(float(pos[2]) - float(target_pos[2])) > 0.05):
+                                        continue
+                                except Exception:
+                                    continue
+                            elif target_pos:
+                                continue
+                            for n in _walk([ent]):
+                                if (n["key"] == "TemplateCRC"
+                                        and n.get("value") is not None):
+                                    target_crc_node = n
+                            if layout_var.get():
+                                for n in _walk([ent]):
+                                    if n["key"] == "Position" and n.get("children"):
+                                        xyz = {}
+                                        for ch in n["children"]:
+                                            if ch["key"] in ("x", "y", "z"):
+                                                xyz[ch["key"]] = ch
+                                        if len(xyz) == 3:
+                                            target_pos_nodes = xyz
+                                        break
+                            break
+                        if target_crc_node is None:
+                            fail.append((i, "TemplateCRC not found"))
+                            continue
+                        edits = [(target_crc_node, new_crc)]
+                        if layout_var.get() and target_pos_nodes:
+                            col = i % cols
+                            row = i // cols
+                            nx = ox + col * spacing
+                            nz = oz + row * spacing
+                            edits.append((target_pos_nodes["x"], float(nx)))
+                            edits.append((target_pos_nodes["z"], float(nz)))
+                        try:
+                            ok = self.commit_bson_edits(
+                                entry, fresh_doc, fresh_kind, edits,
+                                verify_label="bulk NPC assign")
+                        except Exception as ex:
+                            fail.append((i, "commit: %s" % ex))
+                            continue
+                        if ok:
+                            ok_n += 1
+                            try:
+                                label = str(template_label(new_crc))
+                            except Exception:
+                                label = "?"
+                            self.log(
+                                "Bulk NPC [%s] → 0x%08X (%s)"
+                                % (i + 1, new_crc, label))
+                        else:
+                            fail.append((i, "write/verify failed"))
+
+                    msg = "Assigned %s / %s templates." % (ok_n, n)
+                    if fail:
+                        msg += "\n\nFailures (%s):\n" % len(fail)
+                        bits = []
+                        for item in fail[:8]:
+                            try:
+                                idx, err = item
+                                bits.append("  #%s: %s" % (idx + 1, err))
+                            except Exception:
+                                bits.append("  %s" % (item,))
+                        msg += "\n".join(bits)
+                    messagebox.showinfo("Bulk assign done", msg, parent=bd)
+                    bd.destroy()
+                    dlg.destroy()
+                    self.open_world_npcs()
+                except Exception as ex:
+                    import traceback
+                    self.log("bulk_assign failed: %s\n%s" % (
+                        ex, traceback.format_exc()))
+                    messagebox.showerror("Bulk assign failed", str(ex), parent=bd)
 
             bf3 = ttk.Frame(bd)
             bf3.pack(fill="x", padx=8, pady=6)
@@ -7980,7 +8022,7 @@ class App(tk.Tk):
                 target_id, payload, verify_fn=verify_fn,
                 verify_label=verify_label)
             if ok:
-                self.log("%s: %d field(s) set in one write. Verified: "
+                self.log("%s: %s field(s) set in one write. Verified: "
                          "CRCs valid, all values read back correctly."
                          % (verify_label, len(applied)))
             return ok
