@@ -1,0 +1,3069 @@
+{
+  "_comment": "TemplateCRC names for pk_manager. Edit here or via Templates\u2026 UI. kind: world|enemy|npc|trader|quest. Sign (0xF0653E24) and Landing Pad (0x0BCB9932) stay built-in.",
+  "templates": [
+    {
+      "hash": 3442120741,
+      "hash_hex": "0xCD2A9825",
+      "name": "Silas the stern",
+      "kind": "quest",
+      "island": "Fort Finch"
+    },
+    {
+      "hash": 1706656970,
+      "hash_hex": "0x65B984CA",
+      "name": "Aj-Kuar",
+      "kind": "npc",
+      "island": "Hintertown"
+    },
+    {
+      "hash": 3524509427,
+      "hash_hex": "0xD213BEF3",
+      "name": "Anania Ol'faron",
+      "kind": "quest",
+      "island": "Raven's Den / Farran-Enore / Middle Rift"
+    },
+    {
+      "hash": 1668565105,
+      "hash_hex": "0x63744871",
+      "name": "Arietta",
+      "kind": "quest",
+      "island": "Fort Finch"
+    },
+    {
+      "hash": 3417139064,
+      "hash_hex": "0xCBAD6778",
+      "name": "Bayard",
+      "kind": "npc",
+      "island": "Fort Finch"
+    },
+    {
+      "hash": 1720157588,
+      "hash_hex": "0x66878594",
+      "name": "Brother Harry",
+      "kind": "npc",
+      "island": "Dusty Junction"
+    },
+    {
+      "hash": 3178896106,
+      "hash_hex": "0xBD7A1AEA",
+      "name": "Brother Orwell",
+      "kind": "quest",
+      "island": "Dusty Junction"
+    },
+    {
+      "hash": 3359522339,
+      "hash_hex": "0xC83E3E23",
+      "name": "Carl the Collector",
+      "kind": "quest",
+      "island": "Autumn Springs / Morello Marshes / The Motherlode / Lunar Landing"
+    },
+    {
+      "hash": 2504321425,
+      "hash_hex": "0x9544E991",
+      "name": "Carla the Hunter",
+      "kind": "quest",
+      "island": "New Caul"
+    },
+    {
+      "hash": 2408854130,
+      "hash_hex": "0x8F943272",
+      "name": "Cyrill",
+      "kind": "quest",
+      "island": "Squire's Knoll"
+    },
+    {
+      "hash": 3440149847,
+      "hash_hex": "0xCD0C8557",
+      "name": "Cyrill",
+      "kind": "quest",
+      "island": "Squire's Knoll"
+    },
+    {
+      "hash": 315290690,
+      "hash_hex": "0x12CAF442",
+      "name": "Donella",
+      "kind": "npc",
+      "island": "Fort Finch"
+    },
+    {
+      "hash": 1827260991,
+      "hash_hex": "0x6CE9CA3F",
+      "name": "Edna the Farmer (trader)",
+      "kind": "trader",
+      "island": "Port of Caul"
+    },
+    {
+      "hash": 3252177227,
+      "hash_hex": "0xC1D8494B",
+      "name": "El-Auuk",
+      "kind": "npc",
+      "island": "Hintertown"
+    },
+    {
+      "hash": 3227029589,
+      "hash_hex": "0xC0589055",
+      "name": "El-Ulum",
+      "kind": "npc",
+      "island": "Hintertown"
+    },
+    {
+      "hash": 698622310,
+      "hash_hex": "0x29A42166",
+      "name": "Elise",
+      "kind": "quest",
+      "island": "Squire's Knoll"
+    },
+    {
+      "hash": 1151664377,
+      "hash_hex": "0x44A500F9",
+      "name": "Elise",
+      "kind": "quest",
+      "island": "Squire's Knoll"
+    },
+    {
+      "hash": 3120494105,
+      "hash_hex": "0xB9FEF619",
+      "name": "Eluni Sorrowsong (trader)",
+      "kind": "trader",
+      "island": "Joren's Outpost"
+    },
+    {
+      "hash": 2080074296,
+      "hash_hex": "0x7BFB6A38",
+      "name": "Erik the Woodworker (trader)",
+      "kind": "trader",
+      "island": "Orson Orchards"
+    },
+    {
+      "hash": 3267104134,
+      "hash_hex": "0xC2BC0D86",
+      "name": "Fenimore",
+      "kind": "npc",
+      "island": "Landlubber's Leap"
+    },
+    {
+      "hash": 1751325597,
+      "hash_hex": "0x68631B9D",
+      "name": "Frank the Farmer (trader)",
+      "kind": "trader",
+      "island": "Landlubber's Leap"
+    },
+    {
+      "hash": 609734084,
+      "hash_hex": "0x2457CDC4",
+      "name": "Funny Jongo (trader)",
+      "kind": "trader",
+      "island": "Garnet Peaks"
+    },
+    {
+      "hash": 2377984557,
+      "hash_hex": "0x8DBD2A2D",
+      "name": "Fuzzyscrimps McCuddlefluffs (trader)",
+      "kind": "trader",
+      "island": "Low Rift Landing / Middle Rift Mantle / High Rift Haven"
+    },
+    {
+      "hash": 1874775763,
+      "hash_hex": "0x6FBECED3",
+      "name": "Happy Honey (trader)",
+      "kind": "trader",
+      "island": "Random (Event)"
+    },
+    {
+      "hash": 3204732316,
+      "hash_hex": "0xBF04559C",
+      "name": "Hollow Dark Knight (spawn)",
+      "kind": "enemy"
+    },
+    {
+      "hash": 3599869631,
+      "hash_hex": "0xD691A6BF",
+      "name": "Hollow King",
+      "kind": "enemy"
+    },
+    {
+      "hash": 2998141763,
+      "hash_hex": "0xB2B40343",
+      "name": "Hollow King Boss",
+      "kind": "enemy"
+    },
+    {
+      "hash": 1249610083,
+      "hash_hex": "0x4A7B8963",
+      "name": "Hollow King Crystals",
+      "kind": "world"
+    },
+    {
+      "hash": 3077117794,
+      "hash_hex": "0xB7691762",
+      "name": "Hollow Light Knight (spawn)",
+      "kind": "enemy"
+    },
+    {
+      "hash": 1397019279,
+      "hash_hex": "0x5344D28F",
+      "name": "Iki the Trader (trader)",
+      "kind": "trader",
+      "island": "Addermoor"
+    },
+    {
+      "hash": 760325027,
+      "hash_hex": "0x2D51A3A3",
+      "name": "Janine",
+      "kind": "npc",
+      "island": "Squire's Knoll"
+    },
+    {
+      "hash": 3064894243,
+      "hash_hex": "0xB6AE9323",
+      "name": "Janine",
+      "kind": "npc",
+      "island": "Squire's Knoll"
+    },
+    {
+      "hash": 3199629350,
+      "hash_hex": "0xBEB67826",
+      "name": "Jarin (trader)",
+      "kind": "trader",
+      "island": "Hintertown"
+    },
+    {
+      "hash": 1086087253,
+      "hash_hex": "0x40BC6055",
+      "name": "Larry the Lumberjack",
+      "kind": "quest",
+      "island": "Port of Caul"
+    },
+    {
+      "hash": 2728471214,
+      "hash_hex": "0xA2A12AAE",
+      "name": "Linda the Farmer",
+      "kind": "quest",
+      "island": "Plains of Passage"
+    },
+    {
+      "hash": 2698593449,
+      "hash_hex": "0xA0D944A9",
+      "name": "Mama Mirabella (trader)",
+      "kind": "trader",
+      "island": "Glimmerglen"
+    },
+    {
+      "hash": 1856421953,
+      "hash_hex": "0x6EA6C041",
+      "name": "Mark the Farmer (trader)",
+      "kind": "trader",
+      "island": "The Great Scar"
+    },
+    {
+      "hash": 549427502,
+      "hash_hex": "0x20BF992E",
+      "name": "Mike the Miner (trader)",
+      "kind": "trader",
+      "island": "Callum's Claim"
+    },
+    {
+      "hash": 3505916931,
+      "hash_hex": "0xD0F80C03",
+      "name": "Monroe the Knight",
+      "kind": "quest",
+      "island": "Facetta / Dusty Junction / Mosakola Harbor / Great Frontier"
+    },
+    {
+      "hash": 61623467,
+      "hash_hex": "0x03AC4CAB",
+      "name": "Monroe the Knight",
+      "kind": "quest",
+      "island": "Facetta / Dusty Junction / Mosakola Harbor / Great Frontier"
+    },
+    {
+      "hash": 2443969525,
+      "hash_hex": "0x91AC03F5",
+      "name": "Morton the Miner",
+      "kind": "npc",
+      "island": "Dusty Junction & Brackenburg"
+    },
+    {
+      "hash": 2588677812,
+      "hash_hex": "0x9A4C16B4",
+      "name": "Mr. Teeter",
+      "kind": "quest",
+      "island": "Lunar Landing"
+    },
+    {
+      "hash": 263092951,
+      "hash_hex": "0x0FAE7AD7",
+      "name": "Nick the Hunter",
+      "kind": "quest",
+      "island": "Fort Finch"
+    },
+    {
+      "hash": 398234332,
+      "hash_hex": "0x17BC92DC",
+      "name": "Nina the Farmer (trader)",
+      "kind": "trader",
+      "island": "Lunar Landing"
+    },
+    {
+      "hash": 390030990,
+      "hash_hex": "0x173F668E",
+      "name": "Old Man Karl",
+      "kind": "npc"
+    },
+    {
+      "hash": 1444307441,
+      "hash_hex": "0x561661F1",
+      "name": "Philippa the Hunter",
+      "kind": "quest",
+      "island": "Sea of Stalks"
+    },
+    {
+      "hash": 1477343631,
+      "hash_hex": "0x580E798F",
+      "name": "White Button",
+      "kind": "world"
+    },
+    {
+      "hash": 3770848293,
+      "hash_hex": "0xE0C29425",
+      "name": "AND Gate",
+      "kind": "world"
+    },
+    {
+      "hash": 2770766342,
+      "hash_hex": "0xA5268A06",
+      "name": "Rigolph the Alchemist (trader)",
+      "kind": "trader",
+      "island": "Sea of Stalks"
+    },
+    {
+      "hash": 287746671,
+      "hash_hex": "0x1126AA6F",
+      "name": "Robert",
+      "kind": "quest",
+      "island": "Squire's Knoll"
+    },
+    {
+      "hash": 3085088772,
+      "hash_hex": "0xB7E2B804",
+      "name": "Robert",
+      "kind": "quest",
+      "island": "Squire's Knoll"
+    },
+    {
+      "hash": 466014860,
+      "hash_hex": "0x1BC6D28C",
+      "name": "Rupert",
+      "kind": "quest",
+      "island": "Squire's Knoll"
+    },
+    {
+      "hash": 1144021945,
+      "hash_hex": "0x443063B9",
+      "name": "Rupert",
+      "kind": "quest",
+      "island": "Squire's Knoll"
+    },
+    {
+      "hash": 1724248825,
+      "hash_hex": "0x66C5F2F9",
+      "name": "Sammy the Smelter",
+      "kind": "quest",
+      "island": "Plains of Passage"
+    },
+    {
+      "hash": 856452988,
+      "hash_hex": "0x330C6F7C",
+      "name": "Shelton",
+      "kind": "npc",
+      "island": "Fort Finch"
+    },
+    {
+      "hash": 2030399135,
+      "hash_hex": "0x79056E9F",
+      "name": "Shelton (trader)",
+      "kind": "trader",
+      "island": "Fort Finch"
+    },
+    {
+      "hash": 548075373,
+      "hash_hex": "0x20AAF76D",
+      "name": "Spectral Apparition (Dusty Junction)",
+      "kind": "npc",
+      "island": "Dusty Junction"
+    },
+    {
+      "hash": 1768439119,
+      "hash_hex": "0x69683D4F",
+      "name": "Stanton the Geologist",
+      "kind": "quest",
+      "island": "Dusty Junction / Filia's Folly / Witchwater / Sea of Stalks"
+    },
+    {
+      "hash": 3627718411,
+      "hash_hex": "0xD83A970B",
+      "name": "Stanton the Geologist",
+      "kind": "quest",
+      "island": "Dusty Junction / Filia's Folly / Witchwater / Sea of Stalks"
+    },
+    {
+      "hash": 599038212,
+      "hash_hex": "0x23B49904",
+      "name": "Tagus the Wizard",
+      "kind": "quest",
+      "island": "Ghostlight Mire / Angler's Wharf / Callum's Claim / Pillars of Parun / Glimmerglen"
+    },
+    {
+      "hash": 4278961970,
+      "hash_hex": "0xFF0BC732",
+      "name": "Taylor Rafalini (trader)",
+      "kind": "trader"
+    },
+    {
+      "hash": 868188828,
+      "hash_hex": "0x33BF829C",
+      "name": "Uko the Gladiator",
+      "kind": "quest",
+      "island": "Angler's Wharf"
+    },
+    {
+      "hash": 3626225961,
+      "hash_hex": "0xD823D129",
+      "name": "Uldrayus Ol'faron",
+      "kind": "quest",
+      "island": "Farran-Enore"
+    },
+    {
+      "hash": 2926056519,
+      "hash_hex": "0xAE681447",
+      "name": "Ulv the adventurer",
+      "kind": "npc",
+      "island": "Dusty Junction"
+    },
+    {
+      "hash": 1635411664,
+      "hash_hex": "0x617A66D0",
+      "name": "Blue Pressure Plate",
+      "kind": "world"
+    },
+    {
+      "hash": 1021424194,
+      "hash_hex": "0x3CE1B242",
+      "name": "Xarif",
+      "kind": "npc",
+      "island": "Glimmerglen"
+    },
+    {
+      "hash": 2302956626,
+      "hash_hex": "0x89445452",
+      "name": "Ye the Jade Stone Merchant (trader)",
+      "kind": "trader",
+      "island": "Random"
+    },
+    {
+      "hash": 825006402,
+      "hash_hex": "0x312C9942",
+      "name": "Ysmay (trader)",
+      "kind": "trader",
+      "island": "Fort Finch"
+    },
+    {
+      "hash": 1633164289,
+      "hash_hex": "0x61581C01",
+      "name": "Zane the Smith",
+      "kind": "quest",
+      "island": "Addermoor"
+    },
+    {
+      "hash": 1257420744,
+      "hash_hex": "0x4AF2B7C8",
+      "name": "Hollow Knight",
+      "kind": "enemy"
+    },
+    {
+      "hash": 1558850612,
+      "hash_hex": "0x5CEA2C34",
+      "name": "Dummy",
+      "kind": "enemy"
+    },
+    {
+      "hash": 4248400683,
+      "hash_hex": "0xFD39732B",
+      "name": "Anub'Kraken",
+      "kind": "enemy"
+    },
+    {
+      "hash": 1340250673,
+      "hash_hex": "0x4FE29A31",
+      "name": "Magma Block",
+      "kind": "world"
+    },
+    {
+      "hash": 671763606,
+      "hash_hex": "0x280A4C96",
+      "name": "Large Firewalk",
+      "kind": "world"
+    },
+    {
+      "hash": 2219148860,
+      "hash_hex": "0x8445863C",
+      "name": "Small Fire Cannon Trap",
+      "kind": "world"
+    },
+    {
+      "hash": 3570885210,
+      "hash_hex": "0xD4D7625A",
+      "name": "Small Firewalk",
+      "kind": "world"
+    },
+    {
+      "hash": 536862446,
+      "hash_hex": "0x1FFFDEEE",
+      "name": "Large Fire Cannon Trap",
+      "kind": "world"
+    },
+    {
+      "hash": 2320802680,
+      "hash_hex": "0x8A54A378",
+      "name": "Large Light Cannon Trap",
+      "kind": "world"
+    },
+    {
+      "hash": 1697657936,
+      "hash_hex": "0x65303450",
+      "name": "Large Cursed Cannon Trap",
+      "kind": "world"
+    },
+    {
+      "hash": 3804926644,
+      "hash_hex": "0xE2CA92B4",
+      "name": "Large Ice Cannon Trap",
+      "kind": "world"
+    },
+    {
+      "hash": 2553810156,
+      "hash_hex": "0x98380CEC",
+      "name": "Small Cursed Cannon Trap",
+      "kind": "world"
+    },
+    {
+      "hash": 4148122722,
+      "hash_hex": "0xF73F5462",
+      "name": "Small Light Cannon Trap",
+      "kind": "world"
+    },
+    {
+      "hash": 4147078048,
+      "hash_hex": "0xF72F63A0",
+      "name": "Small Ice Cannon Trap",
+      "kind": "world"
+    },
+    {
+      "hash": 2524640359,
+      "hash_hex": "0x967AF467",
+      "name": "Rotating Fire Cannon Trap",
+      "kind": "world"
+    },
+    {
+      "hash": 1887902903,
+      "hash_hex": "0x70871CB7",
+      "name": "Rotating Cursed Cannon Trap",
+      "kind": "world"
+    },
+    {
+      "hash": 3044753175,
+      "hash_hex": "0xB57B3F17",
+      "name": "Rotating Ice Cannon Trap",
+      "kind": "world"
+    },
+    {
+      "hash": 617980809,
+      "hash_hex": "0x24D5A389",
+      "name": "Rotating Poison Cannon Trap",
+      "kind": "world"
+    },
+    {
+      "hash": 2649944334,
+      "hash_hex": "0x9DF2F10E",
+      "name": "Obelisk",
+      "kind": "world"
+    },
+    {
+      "hash": 2397835959,
+      "hash_hex": "0x8EEC12B7",
+      "name": "Large Checkpoint",
+      "kind": "world"
+    },
+    {
+      "hash": 267280068,
+      "hash_hex": "0x0FEE5EC4",
+      "name": "Unlock Indicator",
+      "kind": "world"
+    },
+    {
+      "hash": 1588863846,
+      "hash_hex": "0x5EB42366",
+      "name": "Waypoint",
+      "kind": "world"
+    },
+    {
+      "hash": 2421593740,
+      "hash_hex": "0x9056968C",
+      "name": "Small Checkpoint",
+      "kind": "world"
+    },
+    {
+      "hash": 2862307882,
+      "hash_hex": "0xAA9B5A2A",
+      "name": "Confetti Cannon",
+      "kind": "world"
+    },
+    {
+      "hash": 1722002193,
+      "hash_hex": "0x66A3AB11",
+      "name": "Drum Pad Bongo",
+      "kind": "world"
+    },
+    {
+      "hash": 33072192,
+      "hash_hex": "0x01F8A440",
+      "name": "Drum Pad Conga",
+      "kind": "world"
+    },
+    {
+      "hash": 802016933,
+      "hash_hex": "0x2FCDCEA5",
+      "name": "Drum Pad Timpani",
+      "kind": "world"
+    },
+    {
+      "hash": 1911836256,
+      "hash_hex": "0x71F44E60",
+      "name": "Drum Pad Cowbell",
+      "kind": "world"
+    },
+    {
+      "hash": 2199094257,
+      "hash_hex": "0x831383F1",
+      "name": "Drum Pad Hi-hat",
+      "kind": "world"
+    },
+    {
+      "hash": 3914375025,
+      "hash_hex": "0xE9509F71",
+      "name": "Drum Pad Tamburin",
+      "kind": "world"
+    },
+    {
+      "hash": 2813591534,
+      "hash_hex": "0xA7B3FFEE",
+      "name": "Drum Pad Snare",
+      "kind": "world"
+    },
+    {
+      "hash": 1959745645,
+      "hash_hex": "0x74CF586D",
+      "name": "Drum Block Bongo",
+      "kind": "world"
+    },
+    {
+      "hash": 3317122178,
+      "hash_hex": "0xC5B74482",
+      "name": "Drum Block Timpani",
+      "kind": "world"
+    },
+    {
+      "hash": 291857587,
+      "hash_hex": "0x116564B3",
+      "name": "Drum Block Cowbell",
+      "kind": "world"
+    },
+    {
+      "hash": 268968956,
+      "hash_hex": "0x100823FC",
+      "name": "Drum Block Snare",
+      "kind": "world"
+    },
+    {
+      "hash": 3618730942,
+      "hash_hex": "0xD7B173BE",
+      "name": "Drum Block Tamburin",
+      "kind": "world"
+    },
+    {
+      "hash": 2369526689,
+      "hash_hex": "0x8D3C1BA1",
+      "name": "Drum Block Conga",
+      "kind": "world"
+    },
+    {
+      "hash": 229063064,
+      "hash_hex": "0x0DA73998",
+      "name": "Drum Block Hihat",
+      "kind": "world"
+    },
+    {
+      "hash": 610970597,
+      "hash_hex": "0x246AABE5",
+      "name": "Lying Torches",
+      "kind": "world"
+    },
+    {
+      "hash": 106773643,
+      "hash_hex": "0x065D3C8B",
+      "name": "Placeable Torches (Lit)",
+      "kind": "world"
+    },
+    {
+      "hash": 2847660201,
+      "hash_hex": "0xA9BBD8A9",
+      "name": "Placeable Torches (Unlit)",
+      "kind": "world"
+    },
+    {
+      "hash": 3511401924,
+      "hash_hex": "0xD14BBDC4",
+      "name": "Furfolk Lantern",
+      "kind": "world"
+    },
+    {
+      "hash": 701882477,
+      "hash_hex": "0x29D5E06D",
+      "name": "Elven Latern",
+      "kind": "world"
+    },
+    {
+      "hash": 2052265444,
+      "hash_hex": "0x7A5315E4",
+      "name": "Classic Brazier",
+      "kind": "world"
+    },
+    {
+      "hash": 272525907,
+      "hash_hex": "0x103E6A53",
+      "name": "Small Fireplace",
+      "kind": "world"
+    },
+    {
+      "hash": 1779874353,
+      "hash_hex": "0x6A16BA31",
+      "name": "Fireplace",
+      "kind": "world"
+    },
+    {
+      "hash": 2973696772,
+      "hash_hex": "0xB13F0304",
+      "name": "Brazier",
+      "kind": "world"
+    },
+    {
+      "hash": 3257856394,
+      "hash_hex": "0xC22EF18A",
+      "name": "Guitar Pad F",
+      "kind": "world"
+    },
+    {
+      "hash": 2652162217,
+      "hash_hex": "0x9E14C8A9",
+      "name": "Classic Hanging Brazier",
+      "kind": "world"
+    },
+    {
+      "hash": 2667607398,
+      "hash_hex": "0x9F007566",
+      "name": "Classic Tall Brazier",
+      "kind": "world"
+    },
+    {
+      "hash": 3690937145,
+      "hash_hex": "0xDBFF3B39",
+      "name": "Sand Brazier",
+      "kind": "world"
+    },
+    {
+      "hash": 1429019689,
+      "hash_hex": "0x552D1C29",
+      "name": "Tentacle Brazier",
+      "kind": "world"
+    },
+    {
+      "hash": 3321749943,
+      "hash_hex": "0xC5FDE1B7",
+      "name": "Candycane Brazier",
+      "kind": "world"
+    },
+    {
+      "hash": 3945246894,
+      "hash_hex": "0xEB27B0AE",
+      "name": "Tall Candycane Brazier",
+      "kind": "world"
+    },
+    {
+      "hash": 1228451853,
+      "hash_hex": "0x4938B00D",
+      "name": "Stone Lantern",
+      "kind": "world"
+    },
+    {
+      "hash": 219585351,
+      "hash_hex": "0x0D169B47",
+      "name": "Paper Lantern",
+      "kind": "world"
+    },
+    {
+      "hash": 857917741,
+      "hash_hex": "0x3322C92D",
+      "name": "Yellow Star Lantern",
+      "kind": "world"
+    },
+    {
+      "hash": 2544182373,
+      "hash_hex": "0x97A52465",
+      "name": "Green Star Lantern",
+      "kind": "world"
+    },
+    {
+      "hash": 1050305742,
+      "hash_hex": "0x3E9A64CE",
+      "name": "Lantern (Red)",
+      "kind": "world"
+    },
+    {
+      "hash": 885256116,
+      "hash_hex": "0x34C3EFB4",
+      "name": "Lantern (Green)",
+      "kind": "world"
+    },
+    {
+      "hash": 1647184935,
+      "hash_hex": "0x622E0C27",
+      "name": "Lantern (Blue)",
+      "kind": "world"
+    },
+    {
+      "hash": 2389356630,
+      "hash_hex": "0x8E6AB056",
+      "name": "Green Sparkler",
+      "kind": "world"
+    },
+    {
+      "hash": 2766750870,
+      "hash_hex": "0xA4E94496",
+      "name": "Red Sparkler",
+      "kind": "world"
+    },
+    {
+      "hash": 1452060687,
+      "hash_hex": "0x568CB00F",
+      "name": "Blue Sparkler",
+      "kind": "world"
+    },
+    {
+      "hash": 2109158854,
+      "hash_hex": "0x7DB735C6",
+      "name": "Magenta Sparkler",
+      "kind": "world"
+    },
+    {
+      "hash": 4202439670,
+      "hash_hex": "0xFA7C23F6",
+      "name": "Lantern (Purple)",
+      "kind": "world"
+    },
+    {
+      "hash": 255622733,
+      "hash_hex": "0x0F3C7E4D",
+      "name": "Lantern (Pink)",
+      "kind": "world"
+    },
+    {
+      "hash": 2733940374,
+      "hash_hex": "0xA2F49E96",
+      "name": "Lantern (White)",
+      "kind": "world"
+    },
+    {
+      "hash": 2128910766,
+      "hash_hex": "0x7EE499AE",
+      "name": "Purple Sparkler",
+      "kind": "world"
+    },
+    {
+      "hash": 1883349542,
+      "hash_hex": "0x7041A226",
+      "name": "Yellow Sparkler",
+      "kind": "world"
+    },
+    {
+      "hash": 2970905837,
+      "hash_hex": "0xB1146CED",
+      "name": "Ghost Barrier",
+      "kind": "world"
+    },
+    {
+      "hash": 2693442276,
+      "hash_hex": "0xA08AAAE4",
+      "name": "Large Cage Door",
+      "kind": "world"
+    },
+    {
+      "hash": 780101229,
+      "hash_hex": "0x2E7F666D",
+      "name": "Small Cage Door",
+      "kind": "world"
+    },
+    {
+      "hash": 4032513026,
+      "hash_hex": "0xF05B4402",
+      "name": "Elven Door Large",
+      "kind": "world"
+    },
+    {
+      "hash": 1944355459,
+      "hash_hex": "0x73E48283",
+      "name": "Elven Door Small",
+      "kind": "world"
+    },
+    {
+      "hash": 1652279526,
+      "hash_hex": "0x627BC8E6",
+      "name": "Wooden Door",
+      "kind": "world"
+    },
+    {
+      "hash": 2146972222,
+      "hash_hex": "0x7FF8323E",
+      "name": "Wooden Door with Window",
+      "kind": "world"
+    },
+    {
+      "hash": 1743004937,
+      "hash_hex": "0x67E42509",
+      "name": "Blue Door",
+      "kind": "world"
+    },
+    {
+      "hash": 3540849678,
+      "hash_hex": "0xD30D140E",
+      "name": "Cosmic Sliding Door",
+      "kind": "world"
+    },
+    {
+      "hash": 1406065808,
+      "hash_hex": "0x53CEDC90",
+      "name": "Secret Door Painting",
+      "kind": "world"
+    },
+    {
+      "hash": 4239984211,
+      "hash_hex": "0xFCB90653",
+      "name": "Sliding Paper Door",
+      "kind": "world"
+    },
+    {
+      "hash": 3944251447,
+      "hash_hex": "0xEB188037",
+      "name": "Large Door",
+      "kind": "world"
+    },
+    {
+      "hash": 350499338,
+      "hash_hex": "0x14E4320A",
+      "name": "Secret Bookcase Door",
+      "kind": "world"
+    },
+    {
+      "hash": 2804051907,
+      "hash_hex": "0xA7226FC3",
+      "name": "Sand Gate",
+      "kind": "world"
+    },
+    {
+      "hash": 2894004940,
+      "hash_hex": "0xAC7F02CC",
+      "name": "Skull Gate",
+      "kind": "world"
+    },
+    {
+      "hash": 642044052,
+      "hash_hex": "0x2644D094",
+      "name": "Furfolk Door",
+      "kind": "world"
+    },
+    {
+      "hash": 3562770626,
+      "hash_hex": "0xD45B90C2",
+      "name": "Dark Door",
+      "kind": "world"
+    },
+    {
+      "hash": 515141199,
+      "hash_hex": "0x1EB46E4F",
+      "name": "Trap Door",
+      "kind": "world"
+    },
+    {
+      "hash": 1015009613,
+      "hash_hex": "0x3C7FD14D",
+      "name": "Large Dark Door",
+      "kind": "world"
+    },
+    {
+      "hash": 2219790347,
+      "hash_hex": "0x844F500B",
+      "name": "Door",
+      "kind": "world"
+    },
+    {
+      "hash": 2669644532,
+      "hash_hex": "0x9F1F8AF4",
+      "name": "Large Sliding Paper Door",
+      "kind": "world"
+    },
+    {
+      "hash": 1283688660,
+      "hash_hex": "0x4C8388D4",
+      "name": "Stone Door",
+      "kind": "world"
+    },
+    {
+      "hash": 609536223,
+      "hash_hex": "0x2454C8DF",
+      "name": "Large Blue Door",
+      "kind": "world"
+    },
+    {
+      "hash": 362444190,
+      "hash_hex": "0x159A759E",
+      "name": "Starting Gate",
+      "kind": "world"
+    },
+    {
+      "hash": 1122918005,
+      "hash_hex": "0x42EE5E75",
+      "name": "OR Gate",
+      "kind": "world"
+    },
+    {
+      "hash": 1306254147,
+      "hash_hex": "0x4DDBDB43",
+      "name": "NOT Gate",
+      "kind": "world"
+    },
+    {
+      "hash": 3523295034,
+      "hash_hex": "0xD201373A",
+      "name": "XOR Gate",
+      "kind": "world"
+    },
+    {
+      "hash": 4053396976,
+      "hash_hex": "0xF199EDF0",
+      "name": "NOR Gate",
+      "kind": "world"
+    },
+    {
+      "hash": 4073303069,
+      "hash_hex": "0xF2C9AC1D",
+      "name": "AND Gate",
+      "kind": "world"
+    },
+    {
+      "hash": 3720903340,
+      "hash_hex": "0xDDC87AAC",
+      "name": "NAND Gate",
+      "kind": "world"
+    },
+    {
+      "hash": 1545704620,
+      "hash_hex": "0x5C2194AC",
+      "name": "Delay",
+      "kind": "world"
+    },
+    {
+      "hash": 1669477955,
+      "hash_hex": "0x63823643",
+      "name": "Clock",
+      "kind": "world"
+    },
+    {
+      "hash": 1087728552,
+      "hash_hex": "0x40D56BA8",
+      "name": "Timer",
+      "kind": "world"
+    },
+    {
+      "hash": 2096023093,
+      "hash_hex": "0x7CEEC635",
+      "name": "Guitar Pad G",
+      "kind": "world"
+    },
+    {
+      "hash": 3748293373,
+      "hash_hex": "0xDF6A6AFD",
+      "name": "Guitar Pad F",
+      "kind": "world"
+    },
+    {
+      "hash": 2184984380,
+      "hash_hex": "0x823C373C",
+      "name": "Guitar Pad E",
+      "kind": "world"
+    },
+    {
+      "hash": 2192746120,
+      "hash_hex": "0x82B2A688",
+      "name": "Guitar Pad D",
+      "kind": "world"
+    },
+    {
+      "hash": 1071548474,
+      "hash_hex": "0x3FDE883A",
+      "name": "Guitar Pad C",
+      "kind": "world"
+    },
+    {
+      "hash": 3509943911,
+      "hash_hex": "0xD1357E67",
+      "name": "Guitar Pad B",
+      "kind": "world"
+    },
+    {
+      "hash": 2280242974,
+      "hash_hex": "0x87E9BF1E",
+      "name": "Guitar Pad A",
+      "kind": "world"
+    },
+    {
+      "hash": 3680329154,
+      "hash_hex": "0xDB5D5DC2",
+      "name": "Guitar Block G",
+      "kind": "world"
+    },
+    {
+      "hash": 713567838,
+      "hash_hex": "0x2A882E5E",
+      "name": "Guitar Block F",
+      "kind": "world"
+    },
+    {
+      "hash": 2854932399,
+      "hash_hex": "0xAA2ACFAF",
+      "name": "Guitar Block E",
+      "kind": "world"
+    },
+    {
+      "hash": 2866155226,
+      "hash_hex": "0xAAD60EDA",
+      "name": "Guitar Block D",
+      "kind": "world"
+    },
+    {
+      "hash": 3137771358,
+      "hash_hex": "0xBB06975E",
+      "name": "Guitar Block C",
+      "kind": "world"
+    },
+    {
+      "hash": 3996607236,
+      "hash_hex": "0xEE376304",
+      "name": "Piano Pad G",
+      "kind": "world"
+    },
+    {
+      "hash": 1204053667,
+      "hash_hex": "0x47C466A3",
+      "name": "Piano Pad F",
+      "kind": "world"
+    },
+    {
+      "hash": 3803459761,
+      "hash_hex": "0xE2B430B1",
+      "name": "Piano Pad E",
+      "kind": "world"
+    },
+    {
+      "hash": 1098049203,
+      "hash_hex": "0x4172E6B3",
+      "name": "Piano Pad D",
+      "kind": "world"
+    },
+    {
+      "hash": 816965362,
+      "hash_hex": "0x30B1E6F2",
+      "name": "Guitar Block A",
+      "kind": "world"
+    },
+    {
+      "hash": 2922696076,
+      "hash_hex": "0xAE34CD8C",
+      "name": "Guitar Block B",
+      "kind": "world"
+    },
+    {
+      "hash": 3665489152,
+      "hash_hex": "0xDA7AED00",
+      "name": "Piano Pad C",
+      "kind": "world"
+    },
+    {
+      "hash": 4164313478,
+      "hash_hex": "0xF8366186",
+      "name": "Piano Pad B",
+      "kind": "world"
+    },
+    {
+      "hash": 749313949,
+      "hash_hex": "0x2CA99F9D",
+      "name": "Piano Pad A",
+      "kind": "world"
+    },
+    {
+      "hash": 4076554887,
+      "hash_hex": "0xF2FB4A87",
+      "name": "Piano Block G",
+      "kind": "world"
+    },
+    {
+      "hash": 1672746431,
+      "hash_hex": "0x63B415BF",
+      "name": "Piano Block F",
+      "kind": "world"
+    },
+    {
+      "hash": 2551257793,
+      "hash_hex": "0x98111AC1",
+      "name": "Piano Block E",
+      "kind": "world"
+    },
+    {
+      "hash": 2160485704,
+      "hash_hex": "0x80C66548",
+      "name": "Piano Block D",
+      "kind": "world"
+    },
+    {
+      "hash": 803912013,
+      "hash_hex": "0x2FEAB94D",
+      "name": "Piano Block C",
+      "kind": "world"
+    },
+    {
+      "hash": 2454761053,
+      "hash_hex": "0x9250AE5D",
+      "name": "Piano Block B",
+      "kind": "world"
+    },
+    {
+      "hash": 4286257921,
+      "hash_hex": "0xFF7B1B01",
+      "name": "Piano Block A",
+      "kind": "world"
+    },
+    {
+      "hash": 2133275329,
+      "hash_hex": "0x7F2732C1",
+      "name": "White Pressure Plate",
+      "kind": "world"
+    },
+    {
+      "hash": 2105100397,
+      "hash_hex": "0x7D79486D",
+      "name": "Red Pressure Plate",
+      "kind": "world"
+    },
+    {
+      "hash": 451441443,
+      "hash_hex": "0x1AE87323",
+      "name": "Yellow Pressure Plate",
+      "kind": "world"
+    },
+    {
+      "hash": 3422841099,
+      "hash_hex": "0xCC04690B",
+      "name": "Green Pressure Plate",
+      "kind": "world"
+    },
+    {
+      "hash": 1781197519,
+      "hash_hex": "0x6A2AEACF",
+      "name": "Blue Lever",
+      "kind": "world"
+    },
+    {
+      "hash": 459792229,
+      "hash_hex": "0x1B67DF65",
+      "name": "White Lever",
+      "kind": "world"
+    },
+    {
+      "hash": 1666090987,
+      "hash_hex": "0x634E87EB",
+      "name": "Red Lever",
+      "kind": "world"
+    },
+    {
+      "hash": 4140740759,
+      "hash_hex": "0xF6CEB097",
+      "name": "Bench",
+      "kind": "world"
+    },
+    {
+      "hash": 1030434730,
+      "hash_hex": "0x3D6B2FAA",
+      "name": "White Button",
+      "kind": "world"
+    },
+    {
+      "hash": 412271237,
+      "hash_hex": "0x1892C285",
+      "name": "Red Button",
+      "kind": "world"
+    },
+    {
+      "hash": 3123135096,
+      "hash_hex": "0xBA274278",
+      "name": "Yellow Button",
+      "kind": "world"
+    },
+    {
+      "hash": 733817159,
+      "hash_hex": "0x2BBD2947",
+      "name": "Green Lever",
+      "kind": "world"
+    },
+    {
+      "hash": 2607710289,
+      "hash_hex": "0x9B6E8051",
+      "name": "Yellow Lever",
+      "kind": "world"
+    },
+    {
+      "hash": 3006683876,
+      "hash_hex": "0xB3365AE4",
+      "name": "Green Button",
+      "kind": "world"
+    },
+    {
+      "hash": 233835005,
+      "hash_hex": "0x0DF009FD",
+      "name": "Chair",
+      "kind": "world"
+    },
+    {
+      "hash": 1588865884,
+      "hash_hex": "0x5EB42B5C",
+      "name": "Stool",
+      "kind": "world"
+    },
+    {
+      "hash": 3058478229,
+      "hash_hex": "0xB64CAC95",
+      "name": "Bench",
+      "kind": "world"
+    },
+    {
+      "hash": 1635556352,
+      "hash_hex": "0x617C9C00",
+      "name": "Seat",
+      "kind": "world"
+    },
+    {
+      "hash": 2632893754,
+      "hash_hex": "0x9CEEC53A",
+      "name": "Stock Shelves",
+      "kind": "world"
+    },
+    {
+      "hash": 3823635815,
+      "hash_hex": "0xE3E80D67",
+      "name": "Tea Set Shelves",
+      "kind": "world"
+    },
+    {
+      "hash": 190735706,
+      "hash_hex": "0x0B5E655A",
+      "name": "Window",
+      "kind": "world"
+    },
+    {
+      "hash": 2879795555,
+      "hash_hex": "0xABA63163",
+      "name": "NNarrow Wooden Window Frame",
+      "kind": "world"
+    },
+    {
+      "hash": 211614246,
+      "hash_hex": "0x0C9CFA26",
+      "name": "Blue Window",
+      "kind": "world"
+    },
+    {
+      "hash": 3488416597,
+      "hash_hex": "0xCFED0355",
+      "name": "Wooden Window Frame",
+      "kind": "world"
+    },
+    {
+      "hash": 3432231388,
+      "hash_hex": "0xCC93B1DC",
+      "name": "Carrot Barely Grown",
+      "kind": "world"
+    },
+    {
+      "hash": 3765518683,
+      "hash_hex": "0xE071415B",
+      "name": "Carrot Mid Grown",
+      "kind": "world"
+    },
+    {
+      "hash": 2726760717,
+      "hash_hex": "0xA287110D",
+      "name": "Carrot Fully Grown",
+      "kind": "world"
+    },
+    {
+      "hash": 1548699958,
+      "hash_hex": "0x5C4F4936",
+      "name": "Potato Field Fully Grown",
+      "kind": "world"
+    },
+    {
+      "hash": 3042620742,
+      "hash_hex": "0xB55AB546",
+      "name": "Wheat Fully Field",
+      "kind": "world"
+    },
+    {
+      "hash": 1386856937,
+      "hash_hex": "0x52A9C1E9",
+      "name": "Sakidis",
+      "kind": "trader",
+      "island": "Isle of Toblis"
+    },
+    {
+      "hash": 3148315517,
+      "hash_hex": "0xBBA77B7D",
+      "name": "Planis",
+      "kind": "trader",
+      "island": "Isle of Toblis"
+    },
+    {
+      "hash": 3495246743,
+      "hash_hex": "0xD0553B97",
+      "name": "Panodis",
+      "kind": "trader",
+      "island": "Isle of Toblis"
+    },
+    {
+      "hash": 1923274275,
+      "hash_hex": "0x72A2D623",
+      "name": "Lantern (White)",
+      "kind": "world"
+    },
+    {
+      "hash": 4289469096,
+      "hash_hex": "0xFFAC1AA8",
+      "name": "Crest of the Undead",
+      "kind": "world"
+    },
+    {
+      "hash": 3068840486,
+      "hash_hex": "0xB6EACA26",
+      "name": "Football Goal",
+      "kind": "world"
+    },
+    {
+      "hash": 3975404028,
+      "hash_hex": "0xECF3D9FC",
+      "name": "Upwood",
+      "kind": "trader",
+      "island": "Fort Finch"
+    },
+    {
+      "hash": 585084364,
+      "hash_hex": "0x22DFADCC",
+      "name": "Maligna",
+      "kind": "trader",
+      "island": "Fort Finch"
+    },
+    {
+      "hash": 390197378,
+      "hash_hex": "0x1741F082",
+      "name": "Jerold",
+      "kind": "trader",
+      "island": "Fort Finch"
+    },
+    {
+      "hash": 1631657163,
+      "hash_hex": "0x61411CCB",
+      "name": "Island Merchant Tori",
+      "kind": "trader",
+      "island": "Fort Finch"
+    },
+    {
+      "hash": 1988759049,
+      "hash_hex": "0x768A0E09",
+      "name": "Kipling",
+      "kind": "trader",
+      "island": "Fort Finch"
+    },
+    {
+      "hash": 1056091550,
+      "hash_hex": "0x3EF2AD9E",
+      "name": "Abelena",
+      "kind": "trader",
+      "island": "Fort Finch"
+    },
+    {
+      "hash": 3762545671,
+      "hash_hex": "0xE043E407",
+      "name": "Jorge the Stylist",
+      "kind": "trader",
+      "island": "Fort Finch"
+    },
+    {
+      "hash": 80133812,
+      "hash_hex": "0x04C6BEB4",
+      "name": "Sir Simon",
+      "kind": "npc",
+      "island": "Portal Knight's Sanctuary"
+    },
+    {
+      "hash": 1267275794,
+      "hash_hex": "0x4B891812",
+      "name": "Waltther the stout",
+      "kind": "npc",
+      "island": "Portal Knight's Sanctuary"
+    },
+    {
+      "hash": 1888728796,
+      "hash_hex": "0x7093B6DC",
+      "name": "Knight Guskin (Quest)",
+      "kind": "quest",
+      "island": "Portal Knight's Sanctuary"
+    },
+    {
+      "hash": 1052108554,
+      "hash_hex": "0x3EB5E70A",
+      "name": "Nina the Noisy",
+      "kind": "npc",
+      "island": "Portal Knight's Sanctuary"
+    },
+    {
+      "hash": 482232401,
+      "hash_hex": "0x1CBE4851",
+      "name": "Acolyte Maria (Quest)",
+      "kind": "quest",
+      "island": "Shrieking Sands"
+    },
+    {
+      "hash": 753534147,
+      "hash_hex": "0x2CEA04C3",
+      "name": "High Cultist Zeebo",
+      "kind": "trader",
+      "island": "Shrieking Sands"
+    },
+    {
+      "hash": 3896273184,
+      "hash_hex": "0xE83C6920",
+      "name": "Erik the woodworker",
+      "kind": "trader",
+      "island": "Orson Orchards"
+    },
+    {
+      "hash": 1875731811,
+      "hash_hex": "0x6FCD6563",
+      "name": "Gold Tusk",
+      "kind": "trader"
+    },
+    {
+      "hash": 1002511706,
+      "hash_hex": "0x3BC11D5A",
+      "name": "Iris the Herbalist",
+      "kind": "quest",
+      "island": "Orson Orchards"
+    },
+    {
+      "hash": 3015737980,
+      "hash_hex": "0xB3C0827C",
+      "name": "Mora the Mage",
+      "kind": "trader",
+      "island": "Autumn Springs"
+    },
+    {
+      "hash": 842296045,
+      "hash_hex": "0x32346AED",
+      "name": "Carl the Collector",
+      "kind": "quest",
+      "island": "Autumn Springs / Morello Marshes / The Motherlode / Lunar Landing"
+    },
+    {
+      "hash": 3537005359,
+      "hash_hex": "0xD2D26B2F",
+      "name": "Phylis the Hunter",
+      "kind": "quest",
+      "island": "Autumn Springs"
+    },
+    {
+      "hash": 156961690,
+      "hash_hex": "0x095B0B9A",
+      "name": "Mordrick the Exterminator",
+      "kind": "quest",
+      "island": "Port of Caul"
+    },
+    {
+      "hash": 4279015082,
+      "hash_hex": "0xFF0C96AA",
+      "name": "Edna the Farmer",
+      "kind": "trader",
+      "island": "Port of Caul"
+    },
+    {
+      "hash": 3245057904,
+      "hash_hex": "0xC16BA770",
+      "name": "Larry the Lumberjack",
+      "kind": "quest",
+      "island": "Port of Caul"
+    },
+    {
+      "hash": 2577232579,
+      "hash_hex": "0x999D72C3",
+      "name": "Tagus the Wizard",
+      "kind": "quest",
+      "island": "Ghostlight Mire / Angler's Wharf / Callum's Claim / Pillars of Parun / Glimmerglen"
+    },
+    {
+      "hash": 880564868,
+      "hash_hex": "0x347C5A84",
+      "name": "Mike the Miner",
+      "kind": "trader",
+      "island": "Callum's Claim"
+    },
+    {
+      "hash": 1272454676,
+      "hash_hex": "0x4BD81E14",
+      "name": "Spectral Apparition 2-01",
+      "kind": "npc",
+      "island": "Dusty Junction"
+    },
+    {
+      "hash": 3440338136,
+      "hash_hex": "0xCD0F64D8",
+      "name": "Frost Lily Bed Fully Grown",
+      "kind": "world"
+    },
+    {
+      "hash": 3421003865,
+      "hash_hex": "0xCBE86059",
+      "name": "Blazing Chili Field Fully Grown",
+      "kind": "world"
+    },
+    {
+      "hash": 2457992509,
+      "hash_hex": "0x9281FD3D",
+      "name": "Red Potted Flower Barley Grown",
+      "kind": "world"
+    },
+    {
+      "hash": 3095023379,
+      "hash_hex": "0xB87A4F13",
+      "name": "Red Potted Flower Mid Grown",
+      "kind": "world"
+    },
+    {
+      "hash": 873077594,
+      "hash_hex": "0x340A1B5A",
+      "name": "Red Potted Flower Fully Grown",
+      "kind": "world"
+    },
+    {
+      "hash": 2818786140,
+      "hash_hex": "0xA803435C",
+      "name": "Potato Field Fully Barley Grown",
+      "kind": "world"
+    },
+    {
+      "hash": 1544368274,
+      "hash_hex": "0x5C0D3092",
+      "name": "Potato Field Fully Mid Grown",
+      "kind": "world"
+    },
+    {
+      "hash": 3594318211,
+      "hash_hex": "0xD63CF183",
+      "name": "Wheat Field Mid Grown",
+      "kind": "world"
+    },
+    {
+      "hash": 788948212,
+      "hash_hex": "0x2F0664F4",
+      "name": "Wheat Field Barley Grown",
+      "kind": "world"
+    },
+    {
+      "hash": 2876727279,
+      "hash_hex": "0xAB775FEF",
+      "name": "Blazing Chili Field Mid Grown",
+      "kind": "world"
+    },
+    {
+      "hash": 1141820718,
+      "hash_hex": "0x440ECD2E",
+      "name": "Blazing Chili Field Barley Grown",
+      "kind": "world"
+    },
+    {
+      "hash": 2728127341,
+      "hash_hex": "0xA29BEB6D",
+      "name": "Frost Lily Bed Mid Grown",
+      "kind": "world"
+    },
+    {
+      "hash": 229696664,
+      "hash_hex": "0x0DB0E498",
+      "name": "Frost Lily Bed Barley Grown",
+      "kind": "world"
+    },
+    {
+      "hash": 755192197,
+      "hash_hex": "0x2D035185",
+      "name": "Pink Potted Flower Least",
+      "kind": "world"
+    },
+    {
+      "hash": 2474847925,
+      "hash_hex": "0x93832EB5",
+      "name": "Pink Potted Flower Mid",
+      "kind": "world"
+    },
+    {
+      "hash": 1060369949,
+      "hash_hex": "0x3F33F61D",
+      "name": "Pink Potted Flower Fully",
+      "kind": "world"
+    },
+    {
+      "hash": 700566361,
+      "hash_hex": "0x29C1CB59",
+      "name": "White Potted Flower Least",
+      "kind": "world"
+    },
+    {
+      "hash": 1930291507,
+      "hash_hex": "0x730DE933",
+      "name": "White Potted Flower Mid",
+      "kind": "world"
+    },
+    {
+      "hash": 54457649,
+      "hash_hex": "0x033EF531",
+      "name": "White Potted Flower Fully",
+      "kind": "world"
+    },
+    {
+      "hash": 3962364846,
+      "hash_hex": "0xEC2CE3AE",
+      "name": "Yellow Potted Flower Least",
+      "kind": "world"
+    },
+    {
+      "hash": 335196113,
+      "hash_hex": "0x13FAAFD1",
+      "name": "Yellow Potted Flower Mid",
+      "kind": "world"
+    },
+    {
+      "hash": 1584618831,
+      "hash_hex": "0x5E735D4F",
+      "name": "Yellow Potted Flower Fully",
+      "kind": "world"
+    },
+    {
+      "hash": 3707014299,
+      "hash_hex": "0xDCF48C9B",
+      "name": "Blue Potted Flower Least",
+      "kind": "world"
+    },
+    {
+      "hash": 173790353,
+      "hash_hex": "0x0A5BD491",
+      "name": "Blue Potted Flower Mid",
+      "kind": "world"
+    },
+    {
+      "hash": 2943492350,
+      "hash_hex": "0xAF7220FE",
+      "name": "Blue Potted Flower Fully",
+      "kind": "world"
+    },
+    {
+      "hash": 432913868,
+      "hash_hex": "0x19CDBDCC",
+      "name": "Large Pink Potted Flower Least",
+      "kind": "world"
+    },
+    {
+      "hash": 2068094627,
+      "hash_hex": "0x7B449EA3",
+      "name": "Large Pink Potted Flower Mid",
+      "kind": "world"
+    },
+    {
+      "hash": 2757197096,
+      "hash_hex": "0xA4577D28",
+      "name": "Large Pink Potted Flower Fully",
+      "kind": "world"
+    },
+    {
+      "hash": 1225126377,
+      "hash_hex": "0x4905F1E9",
+      "name": "Large Blue Potted Flower Least",
+      "kind": "world"
+    },
+    {
+      "hash": 2033121788,
+      "hash_hex": "0x792EF9FC",
+      "name": "Large Blue Potted Flower Mid",
+      "kind": "world"
+    },
+    {
+      "hash": 499108905,
+      "hash_hex": "0x1DBFCC29",
+      "name": "Large Blue Potted Flower Fully",
+      "kind": "world"
+    },
+    {
+      "hash": 3045335324,
+      "hash_hex": "0xB584211C",
+      "name": "Large Yellow Potted Flower Least",
+      "kind": "world"
+    },
+    {
+      "hash": 614955460,
+      "hash_hex": "0x24A779C4",
+      "name": "Large Yellow Potted Flower Mid",
+      "kind": "world"
+    },
+    {
+      "hash": 3428779941,
+      "hash_hex": "0xCC5F07A5",
+      "name": "Large Yellow Potted Flower Fully",
+      "kind": "world"
+    },
+    {
+      "hash": 2400731368,
+      "hash_hex": "0x8F1840E8",
+      "name": "Large White Potted Flower Least",
+      "kind": "world"
+    },
+    {
+      "hash": 2413298659,
+      "hash_hex": "0x8FD803E3",
+      "name": "Large White Potted Flower Mid",
+      "kind": "world"
+    },
+    {
+      "hash": 2259317187,
+      "hash_hex": "0x86AA71C3",
+      "name": "Large White Potted Flower Fully",
+      "kind": "world"
+    },
+    {
+      "hash": 3207492557,
+      "hash_hex": "0xBF2E73CD",
+      "name": "Large Red Potted Flower Least",
+      "kind": "world"
+    },
+    {
+      "hash": 3804316539,
+      "hash_hex": "0xE2C1437B",
+      "name": "Large Red Potted Flower Mid",
+      "kind": "world"
+    },
+    {
+      "hash": 907629202,
+      "hash_hex": "0x36195292",
+      "name": "Large Red Potted Flower Fully",
+      "kind": "world"
+    },
+    {
+      "hash": 3137599715,
+      "hash_hex": "0xBB03F8E3",
+      "name": "Potted Aloe Least",
+      "kind": "world"
+    },
+    {
+      "hash": 2696727364,
+      "hash_hex": "0xA0BCCB44",
+      "name": "Potted Aloe Mid",
+      "kind": "world"
+    },
+    {
+      "hash": 2176190249,
+      "hash_hex": "0x81B60729",
+      "name": "Potted Aloe Fully",
+      "kind": "world"
+    },
+    {
+      "hash": 2758695281,
+      "hash_hex": "0xA46E5971",
+      "name": "Red Flower Window Box Least",
+      "kind": "world"
+    },
+    {
+      "hash": 836520617,
+      "hash_hex": "0x31DC4AA9",
+      "name": "Red Flower Window Box Mid",
+      "kind": "world"
+    },
+    {
+      "hash": 3698668705,
+      "hash_hex": "0xDC7534A1",
+      "name": "Red Flower Window Box Fully",
+      "kind": "world"
+    },
+    {
+      "hash": 3949095630,
+      "hash_hex": "0xEB626ACE",
+      "name": "Topiary Cube",
+      "kind": "world"
+    },
+    {
+      "hash": 3926808327,
+      "hash_hex": "0xEA0E5707",
+      "name": "Topiary Helix",
+      "kind": "world"
+    },
+    {
+      "hash": 803365085,
+      "hash_hex": "0x2FE260DD",
+      "name": "Topiary Teddy-bear",
+      "kind": "world"
+    },
+    {
+      "hash": 2152329017,
+      "hash_hex": "0x8049EF39",
+      "name": "Topiary Golem",
+      "kind": "world"
+    },
+    {
+      "hash": 1543356345,
+      "hash_hex": "0x5BFDBFB9",
+      "name": "Topiary Portal",
+      "kind": "world"
+    },
+    {
+      "hash": 1864542400,
+      "hash_hex": "0x6F22A8C0",
+      "name": "Fir Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 3449626881,
+      "hash_hex": "0xCD9D2101",
+      "name": "Ghul Berry Bush Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 554417235,
+      "hash_hex": "0x210BBC53",
+      "name": "Ruby Tree Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 3193766227,
+      "hash_hex": "0xBE5D0153",
+      "name": "Alabaster Bush Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 249722587,
+      "hash_hex": "0x0EE276DB",
+      "name": "Ghost Ginkgo Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 3293243838,
+      "hash_hex": "0xC44AE9BE",
+      "name": "Powder Snow Tree Seedling",
+      "kind": "world"
+    },
+    {
+      "hash": 2997929325,
+      "hash_hex": "0xB2B0C56D",
+      "name": "Crest of the spiders",
+      "kind": "world"
+    },
+    {
+      "hash": 933067,
+      "hash_hex": "0x000E3CCB",
+      "name": "Crest of the hollow knights",
+      "kind": "world"
+    },
+    {
+      "hash": 3053894134,
+      "hash_hex": "0xB606B9F6",
+      "name": "Pioneer's flag",
+      "kind": "world"
+    },
+    {
+      "hash": 1044339597,
+      "hash_hex": "0x3E3F5B8D",
+      "name": "Warrior Guild",
+      "kind": "world"
+    },
+    {
+      "hash": 181364679,
+      "hash_hex": "0x0ACF67C7",
+      "name": "Crest of the turtles",
+      "kind": "world"
+    },
+    {
+      "hash": 3592584366,
+      "hash_hex": "0xD6227CAE",
+      "name": "Crest of the strongarms",
+      "kind": "world"
+    },
+    {
+      "hash": 638980776,
+      "hash_hex": "0x261612A8",
+      "name": "Peace Flag",
+      "kind": "world"
+    },
+    {
+      "hash": 323313753,
+      "hash_hex": "0x13456059",
+      "name": "White Flag",
+      "kind": "world"
+    },
+    {
+      "hash": 2561159628,
+      "hash_hex": "0x98A831CC",
+      "name": "Red Flag",
+      "kind": "world"
+    },
+    {
+      "hash": 1148106750,
+      "hash_hex": "0x446EB7FE",
+      "name": "Pirate Flag",
+      "kind": "world"
+    },
+    {
+      "hash": 2166587494,
+      "hash_hex": "0x81238066",
+      "name": "Rainbow Flag",
+      "kind": "world"
+    },
+    {
+      "hash": 67070705,
+      "hash_hex": "0x03FF6AF1",
+      "name": "Crest of C'Thiris",
+      "kind": "world"
+    },
+    {
+      "hash": 237745744,
+      "hash_hex": "0x0E2BB650",
+      "name": "Pioneer's Banner",
+      "kind": "world"
+    },
+    {
+      "hash": 412660988,
+      "hash_hex": "0x1898B4FC",
+      "name": "Warrior Guild Banner",
+      "kind": "world"
+    },
+    {
+      "hash": 1811297069,
+      "hash_hex": "0x6BF6332D",
+      "name": "Rogue Guild Banner",
+      "kind": "world"
+    },
+    {
+      "hash": 4201728364,
+      "hash_hex": "0xFA71496C",
+      "name": "Ranger Guild Banner",
+      "kind": "world"
+    },
+    {
+      "hash": 3120065402,
+      "hash_hex": "0xB9F86B7A",
+      "name": "Mage Guild Banner",
+      "kind": "world"
+    },
+    {
+      "hash": 767276499,
+      "hash_hex": "0x2DBBB5D3",
+      "name": "Banner of Faynore",
+      "kind": "world"
+    },
+    {
+      "hash": 3503844454,
+      "hash_hex": "0xD0D86C66",
+      "name": "Druid Banner",
+      "kind": "world"
+    },
+    {
+      "hash": 2262173530,
+      "hash_hex": "0x86D6075A",
+      "name": "Furfolk Banner",
+      "kind": "world"
+    },
+    {
+      "hash": 2471615768,
+      "hash_hex": "0x9351DD18",
+      "name": "Sack",
+      "kind": "world"
+    },
+    {
+      "hash": 2361842753,
+      "hash_hex": "0x8CC6DC41",
+      "name": "Pile of Sacks",
+      "kind": "world"
+    },
+    {
+      "hash": 3155925685,
+      "hash_hex": "0xBC1B9AB5",
+      "name": "Pile of Water Bombs",
+      "kind": "world"
+    },
+    {
+      "hash": 653034138,
+      "hash_hex": "0x26EC829A",
+      "name": "Herbs Container 02a",
+      "kind": "world"
+    },
+    {
+      "hash": 85712254,
+      "hash_hex": "0x051BDD7E",
+      "name": "Herbs Container 02b",
+      "kind": "world"
+    },
+    {
+      "hash": 2963758964,
+      "hash_hex": "0xB0A75F74",
+      "name": "Fruits Container 02a",
+      "kind": "world"
+    },
+    {
+      "hash": 2505450376,
+      "hash_hex": "0x95562388",
+      "name": "Fruits Container 02b",
+      "kind": "world"
+    },
+    {
+      "hash": 2430635330,
+      "hash_hex": "0x90E08D42",
+      "name": "Fruits Container 02c",
+      "kind": "world"
+    },
+    {
+      "hash": 2934255401,
+      "hash_hex": "0xAEE52F29",
+      "name": "Berries Container 02a",
+      "kind": "world"
+    },
+    {
+      "hash": 3177810878,
+      "hash_hex": "0xBD698BBE",
+      "name": "Berries Container 02b",
+      "kind": "world"
+    },
+    {
+      "hash": 1125117766,
+      "hash_hex": "0x430FEF46",
+      "name": "Chilli Container 02a",
+      "kind": "world"
+    },
+    {
+      "hash": 3793814513,
+      "hash_hex": "0xE22103F1",
+      "name": "Chilli Container 02b",
+      "kind": "world"
+    },
+    {
+      "hash": 3091670466,
+      "hash_hex": "0xB84725C2",
+      "name": "Barrel",
+      "kind": "world"
+    },
+    {
+      "hash": 3850418666,
+      "hash_hex": "0xE580B9EA",
+      "name": "Forged Weapons Full",
+      "kind": "world"
+    },
+    {
+      "hash": 3032271720,
+      "hash_hex": "0xB4BCCB68",
+      "name": "Forged Weapons Least",
+      "kind": "world"
+    },
+    {
+      "hash": 592669020,
+      "hash_hex": "0x2353695C",
+      "name": "Herbs Container 01a",
+      "kind": "world"
+    },
+    {
+      "hash": 1831457876,
+      "hash_hex": "0x6D29D454",
+      "name": "Herbs Container 02b",
+      "kind": "world"
+    },
+    {
+      "hash": 3083639530,
+      "hash_hex": "0xB7CC9AEA",
+      "name": "Fruits Container 01a",
+      "kind": "world"
+    },
+    {
+      "hash": 3275685777,
+      "hash_hex": "0xC33EFF91",
+      "name": "Fruits Container 01b",
+      "kind": "world"
+    },
+    {
+      "hash": 632767223,
+      "hash_hex": "0x25B742F7",
+      "name": "Fruits Container 01c",
+      "kind": "world"
+    },
+    {
+      "hash": 2580932179,
+      "hash_hex": "0x99D5E653",
+      "name": "Barrel with Arrows",
+      "kind": "world"
+    },
+    {
+      "hash": 4235072355,
+      "hash_hex": "0xFC6E1363",
+      "name": "Quivers with Arrows",
+      "kind": "world"
+    },
+    {
+      "hash": 2873086961,
+      "hash_hex": "0xAB3FD3F1",
+      "name": "Berries Container 01a",
+      "kind": "world"
+    },
+    {
+      "hash": 2818124202,
+      "hash_hex": "0xA7F929AA",
+      "name": "Berries Container 01b",
+      "kind": "world"
+    },
+    {
+      "hash": 3715084300,
+      "hash_hex": "0xDD6FB00C",
+      "name": "Chilli Container 01a",
+      "kind": "world"
+    },
+    {
+      "hash": 2438426818,
+      "hash_hex": "0x915770C2",
+      "name": "Chilli Container 01b",
+      "kind": "world"
+    },
+    {
+      "hash": 1535345758,
+      "hash_hex": "0x5B83845E",
+      "name": "Crate",
+      "kind": "world"
+    },
+    {
+      "hash": 3682946251,
+      "hash_hex": "0xDB854CCB",
+      "name": "Barber Sign",
+      "kind": "world"
+    },
+    {
+      "hash": 652056847,
+      "hash_hex": "0x26DD990F",
+      "name": "Pawn Shop Sign",
+      "kind": "world"
+    },
+    {
+      "hash": 501731380,
+      "hash_hex": "0x1DE7D034",
+      "name": "Carpenter Sign",
+      "kind": "world"
+    },
+    {
+      "hash": 3281974316,
+      "hash_hex": "0xC39EF42C",
+      "name": "Forge Sign",
+      "kind": "world"
+    },
+    {
+      "hash": 3818707696,
+      "hash_hex": "0xE39CDAF0",
+      "name": "Smelter Sign",
+      "kind": "world"
+    },
+    {
+      "hash": 4037811878,
+      "hash_hex": "0xF0AC1EA6",
+      "name": "Tavern Sign",
+      "kind": "world"
+    },
+    {
+      "hash": 2111598375,
+      "hash_hex": "0x7DDC6F27",
+      "name": "Barber Sign",
+      "kind": "world"
+    },
+    {
+      "hash": 3151388118,
+      "hash_hex": "0xBBD65DD6",
+      "name": "Pawn Shop Sign",
+      "kind": "world"
+    },
+    {
+      "hash": 1055530877,
+      "hash_hex": "0x3EEA1F7D",
+      "name": "Carpenter Sign",
+      "kind": "world"
+    },
+    {
+      "hash": 2311216138,
+      "hash_hex": "0x89C25C0A",
+      "name": "Round Sign",
+      "kind": "world"
+    },
+    {
+      "hash": 190517871,
+      "hash_hex": "0x0B5B126F",
+      "name": "Gardener Sign",
+      "kind": "world"
+    },
+    {
+      "hash": 4146523328,
+      "hash_hex": "0xF726ECC0",
+      "name": "Dollmaker Sign",
+      "kind": "world"
+    },
+    {
+      "hash": 2093200601,
+      "hash_hex": "0x7CC3B4D9",
+      "name": "Gardener Sign",
+      "kind": "world"
+    },
+    {
+      "hash": 2055765478,
+      "hash_hex": "0x7A887DE6",
+      "name": "Pet Shop Sign",
+      "kind": "world"
+    },
+    {
+      "hash": 935062527,
+      "hash_hex": "0x37BBEBFF",
+      "name": "Pawn Shop Sign",
+      "kind": "world"
+    },
+    {
+      "hash": 1349545102,
+      "hash_hex": "0x50706C8E",
+      "name": "Library Sign",
+      "kind": "world"
+    },
+    {
+      "hash": 184604022,
+      "hash_hex": "0x0B00D576",
+      "name": "NonWriteable Sign",
+      "kind": "world"
+    },
+    {
+      "hash": 4208598846,
+      "hash_hex": "0xFADA1F3E",
+      "name": "Island Shop Sign",
+      "kind": "world"
+    },
+    {
+      "hash": 628717871,
+      "hash_hex": "0x2579792F",
+      "name": "Laboratory Notes Small",
+      "kind": "world"
+    },
+    {
+      "hash": 3779870396,
+      "hash_hex": "0xE14C3EBC",
+      "name": "Laboratory Notes Mid",
+      "kind": "world"
+    },
+    {
+      "hash": 209404389,
+      "hash_hex": "0x0C7B41E5",
+      "name": "Laboratory Notes Two",
+      "kind": "world"
+    },
+    {
+      "hash": 2361436077,
+      "hash_hex": "0x8CC0A7AD",
+      "name": "Laboratory Notes Large",
+      "kind": "world"
+    },
+    {
+      "hash": 3422419112,
+      "hash_hex": "0xCBFDF8A8",
+      "name": "Wanted Poster",
+      "kind": "world"
+    },
+    {
+      "hash": 1573897804,
+      "hash_hex": "0x5DCFC64C",
+      "name": "Wanted: \"Cannibal\" Lewis",
+      "kind": "world"
+    },
+    {
+      "hash": 1339357096,
+      "hash_hex": "0x4FD4F7A8",
+      "name": "Wanted: \"Blind\" Beauregard",
+      "kind": "world"
+    },
+    {
+      "hash": 1578077967,
+      "hash_hex": "0x5E0F8F0F",
+      "name": "Wanted: \"Nice-Smelling\" Neibrick",
+      "kind": "world"
+    },
+    {
+      "hash": 1697704690,
+      "hash_hex": "0x6530EAF2",
+      "name": "Pirate Certification",
+      "kind": "world"
+    },
+    {
+      "hash": 510052309,
+      "hash_hex": "0x1E66C7D5",
+      "name": "Bamboo Wall Deco",
+      "kind": "world"
+    },
+    {
+      "hash": 121036583,
+      "hash_hex": "0x0736DF27",
+      "name": "Large Bamboo Wall Deco",
+      "kind": "world"
+    },
+    {
+      "hash": 2917665824,
+      "hash_hex": "0xADE80C20",
+      "name": "Small Painting of Squire's Knoll",
+      "kind": "world"
+    },
+    {
+      "hash": 2856584356,
+      "hash_hex": "0xAA4404A4",
+      "name": "Battle of Hintertown Forgery",
+      "kind": "world"
+    },
+    {
+      "hash": 2516236580,
+      "hash_hex": "0x95FAB924",
+      "name": "Large Painting of Squire's Knoll",
+      "kind": "world"
+    },
+    {
+      "hash": 3298615636,
+      "hash_hex": "0xC49CE154",
+      "name": "Painting of Squire's Knoll",
+      "kind": "world"
+    },
+    {
+      "hash": 1239436695,
+      "hash_hex": "0x49E04D97",
+      "name": "Small painting of Autumn Springs",
+      "kind": "world"
+    },
+    {
+      "hash": 2148128118,
+      "hash_hex": "0x8009D576",
+      "name": "Large Painting of Autumn Springs",
+      "kind": "world"
+    },
+    {
+      "hash": 1408722309,
+      "hash_hex": "0x53F76585",
+      "name": "Painting of Old Hintertown",
+      "kind": "world"
+    },
+    {
+      "hash": 1056158877,
+      "hash_hex": "0x3EF3B49D",
+      "name": "Painting of Frida the farmer",
+      "kind": "world"
+    },
+    {
+      "hash": 3783766363,
+      "hash_hex": "0xE187B15B",
+      "name": "Portrait of Barbara the Brave",
+      "kind": "world"
+    },
+    {
+      "hash": 1920356510,
+      "hash_hex": "0x7276509E",
+      "name": "Portrait of Svorensven the Sancimonious",
+      "kind": "world"
+    },
+    {
+      "hash": 3849757300,
+      "hash_hex": "0xE576A274",
+      "name": "Portrait of Archmage Lindo II",
+      "kind": "world"
+    },
+    {
+      "hash": 1448260753,
+      "hash_hex": "0x5652B491",
+      "name": "Portrait of Allen the Agile",
+      "kind": "world"
+    },
+    {
+      "hash": 977433234,
+      "hash_hex": "0x3A427292",
+      "name": "Portrait of Alfred the Archer",
+      "kind": "world"
+    },
+    {
+      "hash": 900900288,
+      "hash_hex": "0x35B2A5C0",
+      "name": "Pottery Pot One",
+      "kind": "world"
+    },
+    {
+      "hash": 2901222260,
+      "hash_hex": "0xACED2374",
+      "name": "Pottery Urn",
+      "kind": "world"
+    },
+    {
+      "hash": 803650965,
+      "hash_hex": "0x2FE6BD95",
+      "name": "Big Bundle",
+      "kind": "world"
+    },
+    {
+      "hash": 1868981231,
+      "hash_hex": "0x6F6663EF",
+      "name": "Pottery Pots Three",
+      "kind": "world"
+    },
+    {
+      "hash": 2324369007,
+      "hash_hex": "0x8A8B0E6F",
+      "name": "Pottery Pots Two",
+      "kind": "world"
+    },
+    {
+      "hash": 1004673915,
+      "hash_hex": "0x3BE21B7B",
+      "name": "Skull",
+      "kind": "world"
+    },
+    {
+      "hash": 519328257,
+      "hash_hex": "0x1EF45201",
+      "name": "Broken Skull",
+      "kind": "world"
+    },
+    {
+      "hash": 830430649,
+      "hash_hex": "0x317F5DB9",
+      "name": "Skull with candle",
+      "kind": "world"
+    },
+    {
+      "hash": 2984213086,
+      "hash_hex": "0xB1DF7A5E",
+      "name": "Small Candles",
+      "kind": "world"
+    },
+    {
+      "hash": 2945027422,
+      "hash_hex": "0xAF898D5E",
+      "name": "Large Candles",
+      "kind": "world"
+    },
+    {
+      "hash": 3200100969,
+      "hash_hex": "0xBEBDAA69",
+      "name": "Book One",
+      "kind": "world"
+    },
+    {
+      "hash": 2345993775,
+      "hash_hex": "0x8BD5062F",
+      "name": "Book Three",
+      "kind": "world"
+    },
+    {
+      "hash": 7068162,
+      "hash_hex": "0x006BDA02",
+      "name": "Book Five",
+      "kind": "world"
+    },
+    {
+      "hash": 2894947207,
+      "hash_hex": "0xAC8D6387",
+      "name": "Book Stack",
+      "kind": "world"
+    },
+    {
+      "hash": 2311059800,
+      "hash_hex": "0x89BFF958",
+      "name": "Book Stack With Bowl",
+      "kind": "world"
+    },
+    {
+      "hash": 1217071913,
+      "hash_hex": "0x488B0B29",
+      "name": "Decorative Box",
+      "kind": "world"
+    },
+    {
+      "hash": 1114325577,
+      "hash_hex": "0x426B4249",
+      "name": "Decorative Box With More",
+      "kind": "world"
+    },
+    {
+      "hash": 3563966971,
+      "hash_hex": "0xD46DD1FB",
+      "name": "Bottle Tall",
+      "kind": "world"
+    },
+    {
+      "hash": 2278226256,
+      "hash_hex": "0x87CAF950",
+      "name": "Bottle Small",
+      "kind": "world"
+    },
+    {
+      "hash": 4175618106,
+      "hash_hex": "0xF8E2E03A",
+      "name": "Bottle Three Stack",
+      "kind": "world"
+    },
+    {
+      "hash": 2641602814,
+      "hash_hex": "0x9D73A8FE",
+      "name": "Bottle Two & Pot",
+      "kind": "world"
+    },
+    {
+      "hash": 422659851,
+      "hash_hex": "0x1931470B",
+      "name": "Bottle Three Tall",
+      "kind": "world"
+    },
+    {
+      "hash": 3507977047,
+      "hash_hex": "0xD1177B57",
+      "name": "Bottle Two Small",
+      "kind": "world"
+    },
+    {
+      "hash": 2073686657,
+      "hash_hex": "0x7B99F281",
+      "name": "Short Vase",
+      "kind": "world"
+    },
+    {
+      "hash": 4043119001,
+      "hash_hex": "0xF0FD1999",
+      "name": "Tall Vase",
+      "kind": "world"
+    },
+    {
+      "hash": 1438793050,
+      "hash_hex": "0x55C23D5A",
+      "name": "Simple Tall Vase",
+      "kind": "world"
+    },
+    {
+      "hash": 2955612458,
+      "hash_hex": "0xB02B112A",
+      "name": "Simple Bulgy Vase",
+      "kind": "world"
+    },
+    {
+      "hash": 774643410,
+      "hash_hex": "0x2E2C1ED2",
+      "name": "Simple Small Vase",
+      "kind": "world"
+    },
+    {
+      "hash": 2205316658,
+      "hash_hex": "0x83727632",
+      "name": "Nest Box",
+      "kind": "world"
+    },
+    {
+      "hash": 3918192321,
+      "hash_hex": "0xE98ADEC1",
+      "name": "Spiderweb",
+      "kind": "world"
+    },
+    {
+      "hash": 1560297633,
+      "hash_hex": "0x5D0040A1",
+      "name": "Carved Pumpkin",
+      "kind": "world"
+    },
+    {
+      "hash": 2592528846,
+      "hash_hex": "0x9A86D9CE",
+      "name": "Jolly Doll",
+      "kind": "world"
+    },
+    {
+      "hash": 1175214965,
+      "hash_hex": "0x460C5B75",
+      "name": "Candycane",
+      "kind": "world"
+    },
+    {
+      "hash": 2627588901,
+      "hash_hex": "0x9C9DD325",
+      "name": "Large Vase",
+      "kind": "world"
+    },
+    {
+      "hash": 918443557,
+      "hash_hex": "0x36BE5625",
+      "name": "Silk Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 2095722525,
+      "hash_hex": "0x7CEA301D",
+      "name": "Ginkgo Tree Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 3582080766,
+      "hash_hex": "0xD58236FE",
+      "name": "Birch Tree Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 224985003,
+      "hash_hex": "0x0D68FFAB",
+      "name": "Wondrous Geode Fragment",
+      "kind": "world"
+    },
+    {
+      "hash": 2278270380,
+      "hash_hex": "0x87CBA5AC",
+      "name": "Cluster Crystal Fragment",
+      "kind": "world"
+    },
+    {
+      "hash": 1559541659,
+      "hash_hex": "0x5CF4B79B",
+      "name": "Corundum Fragment",
+      "kind": "world"
+    },
+    {
+      "hash": 3220551004,
+      "hash_hex": "0xBFF5B55C",
+      "name": "Flying Wonder Crystal Fragment",
+      "kind": "world"
+    },
+    {
+      "hash": 3743528097,
+      "hash_hex": "0xDF21B4A1",
+      "name": "Wonder Crystal Fragment",
+      "kind": "world"
+    },
+    {
+      "hash": 2900316936,
+      "hash_hex": "0xACDF5308",
+      "name": "Cobalt Leek Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 1885599009,
+      "hash_hex": "0x7063F521",
+      "name": "Starlight Tube Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 2618408039,
+      "hash_hex": "0x9C11BC67",
+      "name": "Jelly Berry Bush Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 3358441072,
+      "hash_hex": "0xC82DBE70",
+      "name": "Cosmic Mushroom Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 2437891296,
+      "hash_hex": "0x914F44E0",
+      "name": "Alabaster Mushroom Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 2863240722,
+      "hash_hex": "0xAAA99612",
+      "name": "Amber Bell Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 3862046604,
+      "hash_hex": "0xE632278C",
+      "name": "Swamp Toadstool Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 1862919322,
+      "hash_hex": "0x6F09E49A",
+      "name": "Big Bloomer Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 1261201632,
+      "hash_hex": "0x4B2C68E0",
+      "name": "Eerie Ink Cap Spores",
+      "kind": "world"
+    },
+    {
+      "hash": 290808754,
+      "hash_hex": "0x115563B2",
+      "name": "Garden Mushroom Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 2200421825,
+      "hash_hex": "0x8327C5C1",
+      "name": "Pumpkins Seeds",
+      "kind": "world"
+    },
+    {
+      "hash": 4248309405,
+      "hash_hex": "0xFD380E9D",
+      "name": "Blazing Palm Seeds",
+      "kind": "world"
+    },
+    {
+      "hash": 1175069038,
+      "hash_hex": "0x460A216E",
+      "name": "Cactus Seeds",
+      "kind": "world"
+    },
+    {
+      "hash": 4224797557,
+      "hash_hex": "0xFBD14B75",
+      "name": "Peak Hip Seeds",
+      "kind": "world"
+    },
+    {
+      "hash": 49396705,
+      "hash_hex": "0x02F1BBE1",
+      "name": "Bamboo Seedling",
+      "kind": "world"
+    },
+    {
+      "hash": 2423665302,
+      "hash_hex": "0x90763296",
+      "name": "Aloe Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 4014718415,
+      "hash_hex": "0xEF4BBDCF",
+      "name": "Palm Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 2047271557,
+      "hash_hex": "0x7A06E285",
+      "name": "Beach Palm Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 3153500294,
+      "hash_hex": "0xBBF69886",
+      "name": "Peach Tree Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 441786451,
+      "hash_hex": "0x1A552053",
+      "name": "Jade Cloud Tree Seedling",
+      "kind": "world"
+    },
+    {
+      "hash": 3345257854,
+      "hash_hex": "0xC764957E",
+      "name": "Magenta Berry Bush Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 2030226151,
+      "hash_hex": "0x7902CAE7",
+      "name": "Sand Grass Seedling",
+      "kind": "world"
+    },
+    {
+      "hash": 3379781979,
+      "hash_hex": "0xC973615B",
+      "name": "Sand Palm Seeding",
+      "kind": "world"
+    },
+    {
+      "hash": 4042147941,
+      "hash_hex": "0xF0EE4865",
+      "name": "Sweet Potato Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 1531740345,
+      "hash_hex": "0x5B4C80B9",
+      "name": "Desert Fruit Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 3106115944,
+      "hash_hex": "0xB9239168",
+      "name": "Dark Fire Seedling",
+      "kind": "world"
+    },
+    {
+      "hash": 1263036300,
+      "hash_hex": "0x4B48678C",
+      "name": "Festive Tree Seedling",
+      "kind": "world"
+    },
+    {
+      "hash": 3581480944,
+      "hash_hex": "0xD5790FF0",
+      "name": "Olive Tree Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 3244209183,
+      "hash_hex": "0xC15EB41F",
+      "name": "Tuscus Tree Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 2198967751,
+      "hash_hex": "0x831195C7",
+      "name": "Kolemis Aloe Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 50567724,
+      "hash_hex": "0x03039A2C",
+      "name": "Spring Tree Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 2316756668,
+      "hash_hex": "0x8A16E6BC",
+      "name": "Cotton Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 2751306088,
+      "hash_hex": "0xA3FD9968",
+      "name": "Carved Pumpkin Seedling",
+      "kind": "world"
+    },
+    {
+      "hash": 4102434028,
+      "hash_hex": "0xF4862CEC",
+      "name": "Gold Glimmer Tree Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 2920941115,
+      "hash_hex": "0xAE1A063B",
+      "name": "Hollow Holly Seedling",
+      "kind": "world"
+    },
+    {
+      "hash": 1274023979,
+      "hash_hex": "0x4BF0102B",
+      "name": "Emerald Tree Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 3984491933,
+      "hash_hex": "0xED7E859D",
+      "name": "Bitter Oak Seed",
+      "kind": "world"
+    },
+    {
+      "hash": 240656792,
+      "hash_hex": "0x0E582198",
+      "name": "CustomSIgnReadable?",
+      "kind": "world"
+    },
+    {
+      "hash": 3198839513,
+      "hash_hex": "0xBEAA6AD9",
+      "name": "Ward of Protection",
+      "kind": "world"
+    },
+    {
+      "hash": 281349519,
+      "hash_hex": "0x10C50D8F",
+      "name": "Chef Riddle",
+      "kind": "quest",
+      "island": "Portal Knight's Sanctuary"
+    },
+    {
+      "hash": 558239158,
+      "hash_hex": "0x21460DB6",
+      "name": "Ranger Riley (Quest)",
+      "kind": "quest",
+      "island": "Portal Knight's Sanctuary"
+    },
+    {
+      "hash": 4215223396,
+      "hash_hex": "0xFB3F3464",
+      "name": "Mrs. Spade (Quest)",
+      "kind": "quest",
+      "island": "Portal Knight's Sanctuary"
+    },
+    {
+      "hash": 1562874311,
+      "hash_hex": "0x5D2791C7",
+      "name": "Guard Karina",
+      "kind": "npc",
+      "island": "Portal Knight's Sanctuary"
+    },
+    {
+      "hash": 1455187448,
+      "hash_hex": "0x56BC65F8",
+      "name": "Tomekeeper Benjamin",
+      "kind": "npc",
+      "island": "Portal Knight's Sanctuary"
+    },
+    {
+      "hash": 1737935319,
+      "hash_hex": "0x6796C9D7",
+      "name": "The Archivist",
+      "kind": "quest",
+      "island": "Portal Knight's Sanctuary"
+    },
+    {
+      "hash": 2503620890,
+      "hash_hex": "0x953A391A",
+      "name": "Historian Arnaud",
+      "kind": "npc",
+      "island": "Portal Knight's Sanctuary"
+    },
+    {
+      "hash": 1280898424,
+      "hash_hex": "0x4C58F578",
+      "name": "0x4C58F578",
+      "kind": "npc",
+      "island": "Portal Knight's Sanctuary"
+    }
+  ]
+}
