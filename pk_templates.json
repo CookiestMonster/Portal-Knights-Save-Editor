@@ -3061,8 +3061,8 @@
     {
       "hash": 1280898424,
       "hash_hex": "0x4C58F578",
-      "name": "0x4C58F578",
-      "kind": "npc",
+      "name": "Archmage Meera IV",
+      "kind": "quest",
       "island": "Portal Knight's Sanctuary"
     },
     {
@@ -3129,6 +3129,392 @@
       "hash": 2914940143,
       "hash_hex": "0xADBE74EF",
       "name": "Heinrich the Hammer",
+      "kind": "npc"
+    },
+    {
+      "hash": 3999104143,
+      "hash_hex": "0xEE5D7C8F",
+      "name": "Captain Sayidda (World Pirate)",
+      "kind": "npc"
+    },
+    {
+      "hash": 3538023345,
+      "hash_hex": "0xD2E1F3B1",
+      "name": "Fuzzyscrimps Mccuddlefluffs (World Rifts)",
+      "kind": "trader"
+    },
+    {
+      "hash": 3376091174,
+      "hash_hex": "0xC93B1026",
+      "name": "Fergus the fierece",
+      "kind": "npc",
+      "island": "Portal Knight's Sanctuary"
+    },
+    {
+      "hash": 3405362174,
+      "hash_hex": "0xCAF9B3FE",
+      "name": "Ricker",
+      "kind": "quest",
+      "island": "Fort Finch"
+    },
+    {
+      "hash": 3428898971,
+      "hash_hex": "0xCC60D89B",
+      "name": "Sally",
+      "kind": "npc"
+    },
+    {
+      "hash": 3654339346,
+      "hash_hex": "0xD9D0CB12",
+      "name": "Shifea",
+      "kind": "quest"
+    },
+    {
+      "hash": 3687498314,
+      "hash_hex": "0xDBCAC24A",
+      "name": "Col. Squishy Face Wiggle Bum (World Rift)",
+      "kind": "trader"
+    },
+    {
+      "hash": 4268888417,
+      "hash_hex": "0xFE721161",
+      "name": "\"Never-On-Time\" Norwald (World Middle Rift)",
+      "kind": "npc"
+    },
+    {
+      "hash": 4276335884,
+      "hash_hex": "0xFEE3B50C",
+      "name": "Captain Fluffy Tum Tum (World Rift)",
+      "kind": "trader"
+    },
+    {
+      "hash": 3875461757,
+      "hash_hex": "0xE6FEDA7D",
+      "name": "Bolbec The Shrubber (World Rift DLC)",
+      "kind": "trader"
+    },
+    {
+      "hash": 3858657060,
+      "hash_hex": "0xE5FE6F24",
+      "name": "Hentry (World Pirate)",
+      "kind": "trader"
+    },
+    {
+      "hash": 3206774293,
+      "hash_hex": "0xBF237E15",
+      "name": "Brother Orwell",
+      "kind": "quest"
+    },
+    {
+      "hash": 3149098611,
+      "hash_hex": "0xBBB36E73",
+      "name": "Jorge the Stylist (Barber)",
+      "kind": "trader"
+    },
+    {
+      "hash": 2912358759,
+      "hash_hex": "0xAD971167",
+      "name": "Big Ruven",
+      "kind": "trader"
+    },
+    {
+      "hash": 844548174,
+      "hash_hex": "0x3256C84E",
+      "name": "Sly Heart (Relic Defense)",
+      "kind": "npc"
+    },
+    {
+      "hash": 839183500,
+      "hash_hex": "0x3204EC8C",
+      "name": "Captain Pickles",
+      "kind": "npc"
+    },
+    {
+      "hash": 809433280,
+      "hash_hex": "0x303EF8C0",
+      "name": "Garrett",
+      "kind": "npc"
+    },
+    {
+      "hash": 775227607,
+      "hash_hex": "0x2E3508D7",
+      "name": "Mancomb",
+      "kind": "npc"
+    },
+    {
+      "hash": 752032003,
+      "hash_hex": "0x2CD31903",
+      "name": "Captain Fluffy Tum Tum",
+      "kind": "trader"
+    },
+    {
+      "hash": 721932212,
+      "hash_hex": "0x2B07CFB4",
+      "name": "Swiftpaw",
+      "kind": "npc"
+    },
+    {
+      "hash": 599707477,
+      "hash_hex": "0x23BECF55",
+      "name": "\"Never-On-Time\" Norwald",
+      "kind": "npc"
+    },
+    {
+      "hash": 345952088,
+      "hash_hex": "0x149ECF58",
+      "name": "Vulpeca (World Defense)",
+      "kind": "npc"
+    },
+    {
+      "hash": 509967687,
+      "hash_hex": "0x1E657D47",
+      "name": "Raveneau (Barber)",
+      "kind": "trader"
+    },
+    {
+      "hash": 342477728,
+      "hash_hex": "0x1469CBA0",
+      "name": "WildHowl (Also Trader?)",
+      "kind": "quest"
+    },
+    {
+      "hash": 1142895357,
+      "hash_hex": "0x441F32FD",
+      "name": "Roche",
+      "kind": "npc"
+    },
+    {
+      "hash": 1398802294,
+      "hash_hex": "0x53600776",
+      "name": "Fuzzyscrimps MccuddleFluffs",
+      "kind": "trader"
+    },
+    {
+      "hash": 1417022004,
+      "hash_hex": "0x54760A34",
+      "name": "Slackjaw",
+      "kind": "trader"
+    },
+    {
+      "hash": 1660376009,
+      "hash_hex": "0x62F753C9",
+      "name": "Feylar Silven",
+      "kind": "npc"
+    },
+    {
+      "hash": 320638369,
+      "hash_hex": "0x131C8DA1",
+      "name": "The Archivist",
+      "kind": "quest"
+    },
+    {
+      "hash": 1392553797,
+      "hash_hex": "0x5300AF45",
+      "name": "Kind Mew",
+      "kind": "npc"
+    },
+    {
+      "hash": 433088619,
+      "hash_hex": "0x19D0686B",
+      "name": "Jacques",
+      "kind": "trader"
+    },
+    {
+      "hash": 1069939493,
+      "hash_hex": "0x3FC5FB25",
+      "name": "Orodark",
+      "kind": "npc"
+    },
+    {
+      "hash": 421003373,
+      "hash_hex": "0x1918006D",
+      "name": "Spectral Apparition (World 2-0)",
+      "kind": "npc"
+    },
+    {
+      "hash": 405491907,
+      "hash_hex": "0x182B50C3",
+      "name": "Ara the Acolyte",
+      "kind": "npc"
+    },
+    {
+      "hash": 267179040,
+      "hash_hex": "0x0FECD420",
+      "name": "Shefa",
+      "kind": "npc"
+    },
+    {
+      "hash": 1029723075,
+      "hash_hex": "0x3D6053C3",
+      "name": "Nightplume",
+      "kind": "npc"
+    },
+    {
+      "hash": 1368404194,
+      "hash_hex": "0x519030E2",
+      "name": "Vanor (Rift DLC)",
+      "kind": "npc"
+    },
+    {
+      "hash": 4099049381,
+      "hash_hex": "0xF45287A5",
+      "name": "Master Gunner Morgan",
+      "kind": "quest"
+    },
+    {
+      "hash": 1529163930,
+      "hash_hex": "0x5B25309A",
+      "name": "Guildmaster Rudyard",
+      "kind": "quest"
+    },
+    {
+      "hash": 213868913,
+      "hash_hex": "0x0CBF6171",
+      "name": "Guard Rex",
+      "kind": "npc"
+    },
+    {
+      "hash": 1026559620,
+      "hash_hex": "0x3D300E84",
+      "name": "Finecoat",
+      "kind": "trader"
+    },
+    {
+      "hash": 1313589505,
+      "hash_hex": "0x4E4BC901",
+      "name": "Captain Fluffy Tum Tums",
+      "kind": "trader"
+    },
+    {
+      "hash": 1524492070,
+      "hash_hex": "0x5ADDE726",
+      "name": "Frank the Farmer",
+      "kind": "trader"
+    },
+    {
+      "hash": 1522121842,
+      "hash_hex": "0x5AB9BC72",
+      "name": "Odile",
+      "kind": "npc"
+    },
+    {
+      "hash": 1458653455,
+      "hash_hex": "0x56F1490F",
+      "name": "Boris The Bold (Santuary)",
+      "kind": "npc"
+    },
+    {
+      "hash": 3902417908,
+      "hash_hex": "0xE89A2BF4",
+      "name": "Hector the Guard",
+      "kind": "quest"
+    },
+    {
+      "hash": 4003599597,
+      "hash_hex": "0xEEA214ED",
+      "name": "Chanse",
+      "kind": "npc"
+    },
+    {
+      "hash": 4025576351,
+      "hash_hex": "0xEFF16B9F",
+      "name": "Nimblenose",
+      "kind": "trader"
+    },
+    {
+      "hash": 1283796958,
+      "hash_hex": "0x4C852FDE",
+      "name": "Doza the Alchemist",
+      "kind": "trader"
+    },
+    {
+      "hash": 1275419748,
+      "hash_hex": "0x4C055C64",
+      "name": "Monroe the Knight",
+      "kind": "quest"
+    },
+    {
+      "hash": 3539204741,
+      "hash_hex": "0xD2F3FA85",
+      "name": "Gallows Grace",
+      "kind": "quest"
+    },
+    {
+      "hash": 619556905,
+      "hash_hex": "0x24EDB029",
+      "name": "Tew",
+      "kind": "npc"
+    },
+    {
+      "hash": 47618869,
+      "hash_hex": "0x02D69B35",
+      "name": "Yunlyra",
+      "kind": "trader"
+    },
+    {
+      "hash": 2143433050,
+      "hash_hex": "0x7FC2315A",
+      "name": "\"Ugly Cryin\" Ulexis",
+      "kind": "npc"
+    },
+    {
+      "hash": 2943997087,
+      "hash_hex": "0xAF79D49F",
+      "name": "\"Bad-At-Cheatin\" Chandler (World Raven's Den)",
+      "kind": "npc"
+    },
+    {
+      "hash": 4099169415,
+      "hash_hex": "0xF4545C87",
+      "name": "\"Redecoratin\" Rayde (World Raven's Den)",
+      "kind": "npc"
+    },
+    {
+      "hash": 1625840336,
+      "hash_hex": "0x60E85AD0",
+      "name": "\"Petty Thievin\" Paulopolis (World Raven's Den)",
+      "kind": "npc"
+    },
+    {
+      "hash": 583505282,
+      "hash_hex": "0x22C79582",
+      "name": "Fawnlyn",
+      "kind": "trader"
+    },
+    {
+      "hash": 3483628562,
+      "hash_hex": "0xCFA3F412",
+      "name": "Zylmaris (World Raven's Den)",
+      "kind": "npc"
+    },
+    {
+      "hash": 3458201197,
+      "hash_hex": "0xCE1FF66D",
+      "name": "\"Monkey-Stealin\" Milt (World Raven's Den)",
+      "kind": "npc"
+    },
+    {
+      "hash": 3010307907,
+      "hash_hex": "0xB36DA743",
+      "name": "\"Rob Ya Blind\" Brionne (World Raven's Den)",
+      "kind": "npc"
+    },
+    {
+      "hash": 2554889369,
+      "hash_hex": "0x98488499",
+      "name": "\"Eats-In-His-Sleep\" Sutton (World Raven's Den)",
+      "kind": "npc"
+    },
+    {
+      "hash": 1059662245,
+      "hash_hex": "0x3F2929A5",
+      "name": "Cedany (Barber) (World Raven's Den)",
+      "kind": "trader"
+    },
+    {
+      "hash": 3632129223,
+      "hash_hex": "0xD87DE4C7",
+      "name": "Umorin (World Raven's Den)",
       "kind": "npc"
     }
   ]
