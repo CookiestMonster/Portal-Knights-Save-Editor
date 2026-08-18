@@ -57,6 +57,7 @@ Collect all worlds → here… (NPC dialog) — test tool: copy one of each uniq
 Log — Copy / Save / Clear at the bottom (nothing is written to disk until you click Save log…)
 Note: Character level above 30 can be written in the file, but the game clamps level back to 30 on load. That is a game rule, not the editor.
 ---
+
 Troubleshooting
 Problem	What to try
 Won’t start / `No module named zstandard`	`pip install zstandard`
