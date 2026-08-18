@@ -1047,4 +1047,3 @@ Used in world decode reports, not authoritative game enums:
 - pacify-able / boss-like
 - sign (`0xF0653E24`)
 - landing pad (`0x0BCB9932`)
-
