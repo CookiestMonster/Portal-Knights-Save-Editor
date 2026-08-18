@@ -27,6 +27,7 @@ File naming (16 hex digits):
   0600000000000000  — misc system blob
 
 Needs: pip install zstandard
+       optional: pip install python-snappy  (much faster load/save)
        (tkinter is part of standard Python on Windows / most Linux)
 
 Run it with:   python pk_save_editor.py
@@ -49,11 +50,59 @@ from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 
 # ----------------------------------------------------------------------
-# Snappy (raw format) codec - pure Python, no dependency.
-# (Same implementation as pk_snappy.py, folded in here so this is one file.)
+# Snappy (raw format) codec.
+# Prefer python-snappy (C) when installed; pure-Python fallback otherwise.
+# Both use the same raw Snappy block format (not framed).
+
+_snappy_c = None
+try:
+    import snappy as _snappy_mod
+    # Real python-snappy exposes compress/decompress. The unrelated
+    # "SnapPy" topology package also occupies the name "snappy".
+    if hasattr(_snappy_mod, "compress") and hasattr(_snappy_mod, "decompress"):
+        _probe = _snappy_mod.compress(b"pk")
+        if _snappy_mod.decompress(_probe) == b"pk":
+            _snappy_c = _snappy_mod
+except Exception:
+    _snappy_c = None
+if _snappy_c is None:
+    try:
+        import cramjam
+        class _CramjamSnappyRaw(object):
+            @staticmethod
+            def compress(data):
+                return bytes(cramjam.snappy.compress_raw(data))
+            @staticmethod
+            def decompress(data):
+                return bytes(cramjam.snappy.decompress_raw(data))
+        _probe = _CramjamSnappyRaw.compress(b"pk")
+        if _CramjamSnappyRaw.decompress(_probe) == b"pk":
+            _snappy_c = _CramjamSnappyRaw
+    except Exception:
+        _snappy_c = None
 
 
 def snappy_decompress(buf):
+    """Decompress a raw Snappy block (no framing)."""
+    if _snappy_c is not None:
+        try:
+            return _snappy_c.decompress(buf)
+        except Exception:
+            pass
+    return _snappy_decompress_pure(buf)
+
+
+def snappy_compress(data):
+    """Compress to a raw Snappy block (no framing)."""
+    if _snappy_c is not None:
+        try:
+            return _snappy_c.compress(data)
+        except Exception:
+            pass
+    return _snappy_compress_pure(data)
+
+
+def _snappy_decompress_pure(buf):
     p = 0
     shift = 0
     ulen = 0
@@ -159,7 +208,7 @@ def _emit_copy(out, off, ln):
         out += off.to_bytes(2, "little")
 
 
-def snappy_compress(data):
+def _snappy_compress_pure(data):
     out = bytearray()
     _put_varint(out, len(data))
     for bstart in range(0, len(data), 65536):
@@ -526,26 +575,18 @@ def save_user_template(crc, name, kind="world", island=None):
 
 
 def template_islands(crc):
-    """Island string(s) recorded for this TemplateCRC."""
+    """Island/world name(s) recorded for this TemplateCRC."""
     if crc is None:
         return []
     crc = int(crc) & 0xFFFFFFFF
     meta = _USER_TEMPLATE_META.get(crc) or {}
+    out = []
     if meta.get("island"):
-        return [meta["island"]]
-    islands = meta.get("islands") or []
-    return list(islands)
-
-
-
-def template_islands(crc):
-    """List of island/world names recorded for this TemplateCRC."""
-    if crc is None:
-        return []
-    crc = int(crc) & 0xFFFFFFFF
-    meta = _USER_TEMPLATE_META.get(crc) or {}
-    islands = meta.get("islands") or []
-    return list(islands)
+        out.append(meta["island"])
+    for name in meta.get("islands") or []:
+        if name and name not in out:
+            out.append(name)
+    return out
 
 
 
@@ -598,6 +639,7 @@ for _i in range(256):
 
 
 def crc64(data):
+    """ECMA-182 reflected CRC-64 (byte table; matches game header digests)."""
     c = 0xFFFFFFFFFFFFFFFF
     for b in data:
         c = _TABLE[(b ^ c) & 0xFF] ^ (c >> 8)
@@ -1827,43 +1869,53 @@ def extract_world_chests(nodes):
 
 
 def extract_world_signs(nodes):
-    """List signs from User Editable String Component.
+    """List sign-like entities (User Editable String Component).
 
-    Returns dicts: text, text_node, was_edited, pos, entity.
+    Tutorial / custom signs often have only wasEdited=False and no stored
+    string — the game fills default text from the TemplateCRC. Those still
+    count as signs. NPCs that also carry the component are skipped.
     """
     out = []
     for ent in iter_entities(nodes):
         sign_comp = None
+        has_npc = False
         for n in _walk([ent]):
             if n["key"] == "User Editable String Component" and n.get("children") is not None:
                 sign_comp = n
-                break
-        if sign_comp is None:
+            if n["key"] == "NPC Control Component":
+                has_npc = True
+        if sign_comp is None or has_npc:
             continue
         text_node = None
         was_edited = None
         for ch in sign_comp.get("children") or []:
-            if ch["key"] == "string" and ch.get("value") is not None:
+            if ch["key"] in ("string", "text", "Text", "value") and ch.get("value") is not None:
                 text_node = ch
             if ch["key"] == "wasEdited":
                 was_edited = ch.get("value")
-        # Also accept binary name-like or type-0x02 under the component
         if text_node is None:
             for ch in sign_comp.get("children") or []:
                 if ch.get("type") in (0x02, 0x05) and ch.get("value") is not None:
                     text_node = ch
                     break
-        if text_node is None:
+        text = ""
+        if text_node is not None:
+            val = text_node.get("value")
+            if isinstance(val, (bytes, bytearray)):
+                try:
+                    text = val.decode("utf-8", errors="replace")
+                except Exception:
+                    text = repr(val)
+            elif val is not None:
+                text = str(val)
+        tmpl = _entity_template_crc(ent)
+        pos = _entity_position(ent)
+        if not pos:
             continue
-        val = text_node.get("value")
-        if isinstance(val, (bytes, bytearray)):
-            text = val.split(b"\x00", 1)[0].decode("utf-8", "replace")
-        else:
-            text = str(val) if val is not None else ""
         out.append({
             "entity": ent,
-            "pos": _entity_position(ent),
-            "template": _entity_template_crc(ent),
+            "pos": pos,
+            "template": tmpl,
             "text": text,
             "text_node": text_node,
             "was_edited": was_edited,
@@ -1871,13 +1923,27 @@ def extract_world_signs(nodes):
     return out
 
 
+
+def landing_pad_template_crcs():
+    """TemplateCRCs that count as landing pads (component may be absent)."""
+    out = {0x0BCB9932}
+    # Also any user/builtin template named like a landing pad
+    try:
+        for crc, name in list(WORLD_TEMPLATES.items()) + list(NPC_TEMPLATES.items()):
+            if name and "landing pad" in str(name).lower():
+                out.add(int(crc) & 0xFFFFFFFF)
+    except Exception:
+        pass
+    return out
+
+
 def extract_world_npcs(nodes):
-    """List entities that have NPC Control Component (position + template)."""
+    """Entities with NPC Control Component: pos, template, entity."""
     out = []
     for ent in iter_entities(nodes):
         has_npc = False
         for n in _walk([ent]):
-            if n["key"] == "NPC Control Component":
+            if n.get("key") == "NPC Control Component":
                 has_npc = True
                 break
         if not has_npc:
@@ -1891,33 +1957,132 @@ def extract_world_npcs(nodes):
 
 
 def extract_world_all_templates(nodes):
-    """Every entity that has a TemplateCRC + position.
-
-    Used so the map is not 'empty' for diagnostic worlds that only
-    contain enemies / blocks / props without Inventory / NPC Control /
-    Sign / LandingPad components.
-    """
+    """Every entity that has a TemplateCRC (props, enemies, pads, …)."""
     out = []
     for ent in iter_entities(nodes):
         tmpl = _entity_template_crc(ent)
-        pos = _entity_position(ent)
-        if tmpl is None or not pos:
+        if tmpl is None:
             continue
         out.append({
             "entity": ent,
-            "pos": pos,
-            "template": tmpl,
+            "pos": _entity_position(ent),
+            "template": int(tmpl) & 0xFFFFFFFF,
         })
     return out
 
 
-def landing_pad_template_crcs():
-    """TemplateCRCs that are landing pads (component may be missing in save)."""
-    out = {0x0BCB9932}  # known default
-    for crc, name in WORLD_TEMPLATES.items():
-        if name and "landing pad" in str(name).lower():
-            out.add(int(crc) & 0xFFFFFFFF)
+
+# Fallback safe XZ range, used only when a target island's real
+# width/depth can't be determined (e.g. no matching universe/ILHD found).
+# Positions in real 128-size saves cluster roughly 30-100; 20-110 is
+# conservative for that specific island size.
+_NPC_SAFE_XZ_MIN = 20.5
+_NPC_SAFE_XZ_MAX = 110.5
+_NPC_GRID_SPACING = 3.0
+_NPC_LAYER_DY = 4.0  # stack layers upward when the grid is full
+
+# When real width/height/depth ARE known (from the island's ILHD header),
+# inset this many blocks from each edge/ceiling rather than using the
+# fixed band above. Islands are generally void/water near their bounding
+# box edges, so a fixed inset scales better across 128 / 256 / non-cube
+# island sizes than a fixed absolute band tuned for one size.
+_NPC_EDGE_MARGIN = 20.0
+_NPC_CEILING_MARGIN = 12.0
+
+
+def npc_safe_xz_band(width=None, depth=None):
+    """Safe (x_min, x_max, z_min, z_max) for NPC placement.
+
+    Uses an edge inset of the island's real width/depth when both are
+    known; otherwise falls back to the fixed band tuned for 128 islands.
+    """
+    if width and width > 2 * _NPC_EDGE_MARGIN:
+        x_min, x_max = _NPC_EDGE_MARGIN, width - _NPC_EDGE_MARGIN
+    else:
+        x_min, x_max = _NPC_SAFE_XZ_MIN, _NPC_SAFE_XZ_MAX
+    if depth and depth > 2 * _NPC_EDGE_MARGIN:
+        z_min, z_max = _NPC_EDGE_MARGIN, depth - _NPC_EDGE_MARGIN
+    else:
+        z_min, z_max = _NPC_SAFE_XZ_MIN, _NPC_SAFE_XZ_MAX
+    return x_min, x_max, z_min, z_max
+
+
+def npc_max_layers(origin_y, height=None):
+    """How many +Y layers fit before hitting the island's ceiling.
+
+    Returns None (no cap) when height isn't known.
+    """
+    if not height:
+        return None
+    headroom = height - _NPC_CEILING_MARGIN - float(origin_y)
+    return max(1, int(headroom // _NPC_LAYER_DY) + 1)
+
+
+def _clamp_xz(x, z, x_min=_NPC_SAFE_XZ_MIN, x_max=_NPC_SAFE_XZ_MAX,
+              z_min=_NPC_SAFE_XZ_MIN, z_max=_NPC_SAFE_XZ_MAX):
+    return (min(x_max, max(x_min, float(x))),
+            min(z_max, max(z_min, float(z))))
+
+
+def _npc_grid_positions(n, origin_x, origin_y, origin_z,
+                         x_min=_NPC_SAFE_XZ_MIN, x_max=_NPC_SAFE_XZ_MAX,
+                         z_min=_NPC_SAFE_XZ_MIN, z_max=_NPC_SAFE_XZ_MAX,
+                         max_layers=None):
+    """Lay out n points in a compact grid around origin, then layers +Y.
+
+    X/Z stay inside [x_min,x_max] x [z_min,z_max] so placements don't walk
+    off the island. Extra NPCs stack upward (never downward into the
+    void); if max_layers is given, layers are capped there instead of
+    growing without bound (used when the island's real height is known).
+    """
+    ox, oz = _clamp_xz(origin_x, origin_z, x_min, x_max, z_min, z_max)
+    oy = float(origin_y)
+    x_span = max(0.0, x_max - x_min)
+    z_span = max(0.0, z_max - z_min)
+    max_cols = max(1, int(x_span // _NPC_GRID_SPACING) + 1)
+    max_rows = max(1, int(z_span // _NPC_GRID_SPACING) + 1)
+    # Prefer a roughly square footprint, but never exceed either span.
+    cols = min(max_cols, max(1, int(n ** 0.5) + 1))
+    per_layer = cols * max_rows
+    out = []
+    for i in range(n):
+        layer = i // per_layer
+        if max_layers is not None:
+            layer = min(layer, max_layers - 1)
+        rem = i % per_layer
+        col = rem % cols
+        row = rem // cols
+        # Center the grid on origin as much as possible
+        gx = ox + (col - (cols - 1) / 2.0) * _NPC_GRID_SPACING
+        gz = oz + (row - (max_rows - 1) / 2.0) * _NPC_GRID_SPACING
+        gx, gz = _clamp_xz(gx, gz, x_min, x_max, z_min, z_max)
+        gy = oy + layer * _NPC_LAYER_DY
+        out.append((gx, gy, gz))
     return out
+
+
+def _patch_entity_position_bytes(entity_doc_bytes, x, y, z):
+    """Return a copy of an Entity document with Position x/y/z set."""
+    buf = bytearray(entity_doc_bytes)
+    nodes, _ = bson_parse(buf, 0)
+    pos_node = None
+    for n in _walk(nodes):
+        if n.get("key") == "Position" and n.get("children"):
+            pos_node = n
+            break
+    if pos_node is None:
+        return bytes(entity_doc_bytes)
+    for ch in pos_node.get("children") or []:
+        if ch.get("key") in ("x", "y", "z") and ch.get("type") == 0x01:
+            val = {"x": x, "y": y, "z": z}[ch["key"]]
+            struct.pack_into("<f", buf, ch["vstart"], float(val))
+    return bytes(buf)
+
+
+def _encode_array_entity_element(index, entity_doc_bytes):
+    """BSON array element: type 0x03 + key + 0 + document."""
+    key = str(index).encode("utf-8")
+    return bytes([0x03]) + key + b"\x00" + entity_doc_bytes
 
 
 def extract_world_landing_pads(nodes):
@@ -3848,7 +4013,10 @@ class App(tk.Tk):
         except Exception:
             pass
         try:
-            messagebox.showerror("Unexpected error", str(val))
+            messagebox.showerror(
+                "Unexpected error",
+                "%s\n\nUse Copy log / Save log… at the bottom if you want "
+                "to share the full log." % val)
         except Exception:
             pass
 
@@ -4138,6 +4306,19 @@ class App(tk.Tk):
         # ---- log ----
         f6 = ttk.LabelFrame(self, text="Log")
         f6.pack(fill="both", **pad)
+        log_btns = ttk.Frame(f6)
+        log_btns.pack(fill="x", padx=6, pady=(4, 0))
+        ttk.Button(log_btns, text="Copy log",
+                   command=self.copy_log).pack(side="left")
+        ttk.Button(log_btns, text="Save log…",
+                   command=self.save_log).pack(side="left", padx=6)
+        ttk.Button(log_btns, text="Clear log",
+                   command=self.clear_log).pack(side="left")
+        ttk.Label(
+            log_btns,
+            text="Only written to disk when you click Save log…",
+            foreground="#666",
+        ).pack(side="left", padx=10)
         self.log_text = tk.Text(f6, height=6, wrap="word", state="disabled")
         self.log_text.pack(fill="both", expand=True, padx=6, pady=6)
 
@@ -4145,6 +4326,53 @@ class App(tk.Tk):
         self.log_text.configure(state="normal")
         self.log_text.insert("end", msg + "\n")
         self.log_text.see("end")
+        self.log_text.configure(state="disabled")
+
+    def get_log_text(self):
+        """Full log contents (in-memory only until Save log…)."""
+        try:
+            return self.log_text.get("1.0", "end-1c")
+        except Exception:
+            return ""
+
+    def copy_log(self):
+        text = self.get_log_text()
+        if not text.strip():
+            messagebox.showinfo("Log", "Log is empty.")
+            return
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self.update_idletasks()
+            messagebox.showinfo("Log", "Log copied to clipboard.")
+        except Exception as ex:
+            messagebox.showerror("Clipboard", str(ex))
+
+    def save_log(self):
+        text = self.get_log_text()
+        if not text.strip():
+            messagebox.showinfo("Log", "Log is empty.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Save log",
+            defaultextension=".txt",
+            initialfile="pk_save_editor_log.txt",
+            filetypes=[("Text", "*.txt"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+                if not text.endswith("\n"):
+                    fh.write("\n")
+            messagebox.showinfo("Log", "Saved:\n%s" % path)
+        except Exception as ex:
+            messagebox.showerror("Save failed", str(ex))
+
+    def clear_log(self):
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
         self.log_text.configure(state="disabled")
 
     # -- save file discovery --------------------------------------------
@@ -6191,7 +6419,8 @@ class App(tk.Tk):
             tree.bind("<Double-Button-1>",
                       lambda e, tw=tree: copy_hash(tw, quiet=True))
 
-
+            bf = ttk.Frame(frame)
+            bf.pack(fill="x", padx=4, pady=4)
             ttk.Button(bf, text="Change item…",
                        command=change_item).pack(side="left")
             ttk.Button(bf, text="Edit stack…",
@@ -6256,12 +6485,22 @@ class App(tk.Tk):
         row_data = {}
         for i, (e, doc, kind, sign, container) in enumerate(rows):
             pos = sign.get("pos") or (None, None, None)
+            tmpl = sign.get("template")
+            tname = template_label(tmpl) if tmpl is not None else "Sign"
+            raw = (sign.get("text") or "").strip()
+            if raw:
+                text = raw[:80]
+            elif sign.get("was_edited") is False:
+                text = "(default game text)"
+            else:
+                text = "(no text in save)"
             iid = tree.insert("", "end", values=(
                 i + 1,
+                tname,
                 ("%.1f" % pos[0]) if pos[0] is not None else "?",
                 ("%.1f" % pos[1]) if pos[1] is not None else "?",
                 ("%.1f" % pos[2]) if pos[2] is not None else "?",
-                (sign.get("text") or "")[:80],
+                text,
                 "%08X" % (int(e.get("id", 0)) & 0xFFFFFFFF),
             ))
             row_data[iid] = (e, doc, kind, sign, container)
@@ -6775,10 +7014,10 @@ class App(tk.Tk):
                     txt.insert("1.0", clip)
             except Exception:
                 pass
-            layout_var = tk.BooleanVar(value=True)
+            layout_var = tk.BooleanVar(value=False)
             ttk.Checkbutton(
                 bd,
-                text="Also lay out in a grid (2-block spacing from first NPC)",
+                text="Also lay out in a compact grid (optional — off = keep positions)",
                 variable=layout_var,
             ).pack(anchor="w", padx=8)
 
@@ -6826,13 +7065,54 @@ class App(tk.Tk):
                             parent=bd):
                         return
 
-                    origin = slots[0][1]["npc"].get("pos") or (0, 60, 0)
+                    # Grid origin: prefer landing pad, else median NPC pos.
+                    # Never start from a lone outlier at the map edge.
+                    def _median(vals):
+                        s = sorted(vals)
+                        return s[len(s) // 2]
+                    pad_pos = None
                     try:
-                        ox, oy, oz = float(origin[0]), float(origin[1]), float(origin[2])
+                        cont0 = load_container(path)
+                        for ee in cont0.entries:
+                            if ee.get("tag") != b"BKCK":
+                                continue
+                            try:
+                                d0, _k0 = unwrap(cont0.chunk(ee), self.dctx)
+                                n0, _ = bson_parse(bytearray(d0))
+                            except Exception:
+                                continue
+                            pads = extract_world_landing_pads(n0)
+                            if pads:
+                                pad_pos = pads[0].get("pos")
+                                break
                     except Exception:
-                        ox, oy, oz = 0.0, 60.0, 0.0
-                    cols = max(8, int(n ** 0.5) + 1)
+                        pad_pos = None
+                    xs, ys, zs = [], [], []
+                    for _iid, _data in slots:
+                        pp = (_data.get("npc") or {}).get("pos")
+                        if not pp:
+                            continue
+                        try:
+                            xs.append(float(pp[0])); ys.append(float(pp[1])); zs.append(float(pp[2]))
+                        except Exception:
+                            pass
+                    if pad_pos:
+                        try:
+                            ox, oy, oz = float(pad_pos[0]), float(pad_pos[1]), float(pad_pos[2])
+                        except Exception:
+                            ox = _median(xs) if xs else 64.0
+                            oy = _median(ys) if ys else 60.0
+                            oz = _median(zs) if zs else 64.0
+                    elif xs:
+                        ox, oy, oz = _median(xs), _median(ys), _median(zs)
+                    else:
+                        ox, oy, oz = 64.0, 60.0, 64.0
+                    # Compact grid near origin (not map edge)
+                    cols = min(8, max(4, int(n ** 0.5) + 1))
                     spacing = 2.0
+                    self.log(
+                        "bulk grid origin=(%.1f, %.1f, %.1f) cols=%s spacing=%s"
+                        % (ox, oy, oz, cols, spacing))
 
                     ok_n = 0
                     fail = []
@@ -6905,8 +7185,19 @@ class App(tk.Tk):
                             row = i // cols
                             nx = ox + col * spacing
                             nz = oz + row * spacing
-                            edits.append((target_pos_nodes["x"], float(nx)))
-                            edits.append((target_pos_nodes["z"], float(nz)))
+                            # Keep everyone on the same surface height as origin
+                            # so repeats cannot drift under the map.
+                            ny = oy
+                            try:
+                                edits.append((target_pos_nodes["x"], float(nx)))
+                                edits.append((target_pos_nodes["y"], float(ny)))
+                                edits.append((target_pos_nodes["z"], float(nz)))
+                            except Exception as ex:
+                                fail.append((i, "pos nodes: %s" % ex))
+                                continue
+                            self.log(
+                                "  layout slot %s -> (%.1f, %.1f, %.1f)"
+                                % (i + 1, nx, ny, nz))
                         try:
                             ok = self.commit_bson_edits(
                                 entry, fresh_doc, fresh_kind, edits,
@@ -7008,7 +7299,266 @@ class App(tk.Tk):
                    command=copy_selected).pack(side="left", padx=4)
         ttk.Button(bf, text="Copy NPC templates…",
                    command=copy_all).pack(side="left", padx=4)
+        ttk.Button(bf, text="Collect all worlds → here…",
+                   command=lambda: self.collect_npcs_into_world(path)).pack(
+                       side="left", padx=4)
         ttk.Button(bf, text="Close", command=dlg.destroy).pack(side="right")
+
+
+    def _lookup_target_island_dims(self, target_path):
+        """(width, height, depth) for target_path's island, or all-None.
+
+        Matches the world file to its parent universe by save root +
+        universe slot + community flag (siblings from find_saves()), then
+        matches the island itself inside that universe by comparing
+        location codes: the world file's own location (from its
+        filename) against each ILHD entry's location (derived from its
+        entry id via island_location_from_entry_id). On a match, reads
+        real width/height/depth from that ILHD via
+        extract_island_seed_and_size.
+
+        Best-effort: returns (None, None, None) if the world's location
+        can't be determined, no sibling universe file is found, or no
+        ILHD entry in it matches - callers should fall back to the
+        fixed safe band in that case, not treat this as an error.
+        """
+        rows = getattr(self, "_all_saves", None) or find_saves()
+        target_row = next((r for r in rows if r[3] == target_path), None)
+        if target_row is None:
+            return None, None, None
+        info = target_row[4]
+        if info.get("type") != "world" or info.get("location") is None:
+            return None, None, None
+        target_root = target_row[1]
+        target_slot = info.get("universe")
+        target_community = info.get("community")
+
+        for row in rows:
+            uinfo = row[4]
+            if (uinfo.get("type") != "universe"
+                    or uinfo.get("universe") != target_slot
+                    or uinfo.get("community") != target_community
+                    or row[1] != target_root):
+                continue
+            try:
+                ucontainer = load_container(row[3])
+            except Exception:
+                continue
+            for e in ucontainer.entries:
+                if e.get("tag") != b"ILHD":
+                    continue
+                loc, _name = island_location_from_entry_id(e["id"])
+                if loc != info["location"]:
+                    continue
+                try:
+                    doc, _kind = unwrap(ucontainer.chunk(e), self.dctx)
+                except Exception:
+                    continue
+                dims = extract_island_seed_and_size(doc)
+                w, h, d = dims.get("width"), dims.get("height"), dims.get("depth")
+                if w and h and d:
+                    return w, h, d
+            # Right universe file, but no ILHD matched this location -
+            # other rows can't be a better match, so stop here.
+            break
+        return None, None, None
+
+    def collect_npcs_into_world(self, target_path=None):
+        """TEST: copy unique NPC entities from every world into target.
+
+        Dedupes by TemplateCRC (one of each type). Places them on a flat
+        Y grid around the landing pad / existing NPCs, clamped to a safe
+        XZ band so they don't walk off typical islands. Overflow stacks
+        upward in +Y layers.
+        """
+        if not target_path:
+            target_path, _info = self._resolve_world_path()
+        if not target_path:
+            messagebox.showinfo(
+                "No world",
+                "Select a target world first (Worlds tab / filter).")
+            return
+        if not self._ensure_dict():
+            return
+
+        if not messagebox.askyesno(
+                "Collect NPCs",
+                "Scan every world on disk, take one copy of each unique "
+                "NPC TemplateCRC, and insert them into:\n\n%s\n\n"
+                "Positions: flat grid at existing NPC/landing-pad height, "
+                "XZ clamped to ~20–110 (safe band), extra layers go UP.\n\n"
+                "Backup is made first. Continue?" % target_path):
+            return
+
+        # --- gather unique NPC bodies from all worlds ---
+        by_crc = {}  # crc -> (entity_doc_bytes, src_name, label)
+        world_rows = []
+        for row in getattr(self, "_all_saves", None) or find_saves():
+            info = row[4]
+            if info.get("type") != "world":
+                continue
+            world_rows.append(row)
+
+        self.log("Collect NPCs: scanning %d world file(s)…" % len(world_rows))
+        for row in world_rows:
+            wpath = row[3]
+            wname = (row[4].get("location_name") or row[2] or wpath)
+            try:
+                for e, doc, kind, nodes in self._scan_world_bkck(wpath):
+                    for npc in extract_world_npcs(nodes):
+                        tmpl = npc.get("template")
+                        if tmpl is None:
+                            continue
+                        tcrc = int(tmpl) & 0xFFFFFFFF
+                        if tcrc in by_crc:
+                            continue
+                        if tcrc in landing_pad_template_crcs():
+                            continue
+                        ent = npc.get("entity")
+                        if not ent or ent.get("vstart") is None:
+                            continue
+                        body = bytes(doc[ent["vstart"]:ent["vend"]])
+                        label = template_label(tcrc)
+                        by_crc[tcrc] = (body, wname, label)
+            except Exception as ex:
+                self.log("  skip %s: %s" % (wname, ex))
+
+        if not by_crc:
+            messagebox.showinfo("Collect NPCs", "No NPCs found in any world.")
+            return
+
+        items = sorted(by_crc.items(), key=lambda kv: kv[0])
+        self.log("Collect NPCs: %d unique TemplateCRC(s)" % len(items))
+
+        # --- load target, find EntityArray to host copies ---
+        try:
+            container = load_container(target_path)
+        except Exception as ex:
+            messagebox.showerror("Load failed", str(ex))
+            return
+        self.savefile_path.set(target_path)
+        self.container = container
+
+        best = None  # (entry, doc, kind, nodes, entity_array_node, child_count)
+        origin = None
+        pad_y = None
+        for e in container.entries:
+            if e.get("tag") != b"BKCK":
+                continue
+            try:
+                doc, kind = unwrap(container.chunk(e), self.dctx)
+                nodes, _ = bson_parse(bytearray(doc))
+            except Exception:
+                continue
+            for pad in extract_world_landing_pads(nodes):
+                if pad.get("pos"):
+                    origin = pad["pos"]
+                    pad_y = pad["pos"][1]
+            npc_pos = []
+            for npc in extract_world_npcs(nodes):
+                if npc.get("pos"):
+                    npc_pos.append(npc["pos"])
+            if npc_pos and origin is None:
+                xs = [p[0] for p in npc_pos]
+                ys = [p[1] for p in npc_pos]
+                zs = [p[2] for p in npc_pos]
+                origin = (sorted(xs)[len(xs)//2],
+                          sorted(ys)[len(ys)//2],
+                          sorted(zs)[len(zs)//2])
+            earr = None
+            for n in _walk(nodes):
+                if n.get("key") == "EntityArray" and n.get("children") is not None:
+                    earr = n
+                    break
+            if earr is None:
+                continue
+            child_n = len(earr.get("children") or [])
+            if best is None or child_n > best[5]:
+                best = (e, doc, kind, nodes, earr, child_n)
+
+        if best is None:
+            messagebox.showerror(
+                "No EntityArray",
+                "Target world has no EntityArray to insert into.\n"
+                "Open a world that already has at least one entity.")
+            return
+
+        e, doc, kind, nodes, earr, child_n = best
+        if origin is None:
+            origin = (64.5, 60.0, 64.5)
+        ox, oy, oz = float(origin[0]), float(origin[1]), float(origin[2])
+        if pad_y is not None:
+            oy = float(pad_y)
+        positions = _npc_grid_positions(len(items), ox, oy, oz)
+        self.log(
+            "Collect NPCs: origin=(%.1f, %.1f, %.1f)  "
+            "safe XZ [%.0f, %.0f]  spacing=%.0f  layers +Y %.0f"
+            % (ox, oy, oz, _NPC_SAFE_XZ_MIN, _NPC_SAFE_XZ_MAX,
+               _NPC_GRID_SPACING, _NPC_LAYER_DY))
+
+        # Build new array elements with patched positions
+        blob = bytearray()
+        next_idx = child_n
+        for i, (tcrc, (body, wname, label)) in enumerate(items):
+            x, y, z = positions[i]
+            try:
+                body2 = _patch_entity_position_bytes(body, x, y, z)
+            except Exception as ex:
+                self.log("  skip 0x%08X position patch: %s" % (tcrc, ex))
+                body2 = body
+            blob += _encode_array_entity_element(next_idx + i, body2)
+            self.log(
+                "  + 0x%08X %-28s from %s -> (%.1f, %.1f, %.1f)"
+                % (tcrc, (label or "")[:28], wname, x, y, z))
+
+        if not blob:
+            messagebox.showinfo("Collect NPCs", "Nothing to insert.")
+            return
+
+        buf = bytearray(doc)
+        # Re-find EntityArray on this buffer (same offsets as parse of doc)
+        nodes2, _ = bson_parse(buf)
+        earr2 = None
+        for n in _walk(nodes2):
+            if n.get("key") == "EntityArray" and n.get("children") is not None:
+                earr2 = n
+                break
+        if earr2 is None:
+            messagebox.showerror("Collect NPCs", "EntityArray vanished.")
+            return
+        try:
+            bson_insert_element(buf, earr2, bytes(blob))
+        except Exception as ex:
+            messagebox.showerror("Insert failed", str(ex))
+            return
+
+        new_doc = bytes(buf)
+        # Verify parse
+        try:
+            bson_parse(bytearray(new_doc))
+        except Exception as ex:
+            messagebox.showerror(
+                "Parse failed after insert",
+                "Aborted write: %s" % ex)
+            return
+
+        try:
+            self.write_container(
+                e["id"],
+                wrap(new_doc, kind, self.cctx),
+                verify_label="collect NPCs (%d)" % len(items))
+        except Exception as ex:
+            messagebox.showerror("Write failed", str(ex))
+            return
+
+        messagebox.showinfo(
+            "Collect NPCs",
+            "Inserted %d unique NPC(s) into:\n%s\n\n"
+            "Restart the game (or reload the world) to see them.\n"
+            "Grid is clamped to XZ ~%.0f–%.0f; extra rows go UP in Y."
+            % (len(items), target_path, _NPC_SAFE_XZ_MIN, _NPC_SAFE_XZ_MAX))
+        self.log("Collect NPCs: wrote %d unique NPCs into %s"
+                 % (len(items), target_path))
 
 
     def open_world_map(self):
@@ -7373,11 +7923,20 @@ class App(tk.Tk):
             if show_signs.get():
                 for s in signs:
                     x, y, z = s["pos"]
-                    text = (s.get("text") or "")[:60]
+                    text = (s.get("text") or "").strip()
+                    tmpl = s.get("template")
+                    tname = template_label(tmpl) if tmpl else "Sign"
+                    if text:
+                        tip = "Sign  %s  %r  (%.1f, %.1f, %.1f)" % (
+                            tname, text[:50], x, y, z)
+                    elif s.get("was_edited") is False:
+                        tip = "Sign  %s  (default game text)  (%.1f, %.1f, %.1f)" % (
+                            tname, x, y, z)
+                    else:
+                        tip = "Sign  %s  (no text in save)  (%.1f, %.1f, %.1f)" % (
+                            tname, x, y, z)
                     add_footprint(
-                        x, z, 1, 1, "#e6c84b", "sign",
-                        "Sign  %r  (%.1f, %.1f, %.1f)" % (text, x, y, z),
-                        s)
+                        x, z, 1, 1, "#e6c84b", "sign", tip, s)
 
             # 4) NPCs on top of props (so they are not covered by gray)
             if show_npcs.get():
