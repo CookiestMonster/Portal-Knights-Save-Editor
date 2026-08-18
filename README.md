@@ -1,7 +1,5 @@
 Portal Knights Save Editor
-
 Edit Portal Knights characters, worlds, chests, NPCs, and more.
-
 Needs Python 3 with tkinter (included with most Windows / macOS installs; on Linux install `python3-tk` if needed).
 ---
 Run
