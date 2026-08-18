@@ -2028,37 +2028,79 @@ def _npc_grid_positions(n, origin_x, origin_y, origin_z,
                          x_min=_NPC_SAFE_XZ_MIN, x_max=_NPC_SAFE_XZ_MAX,
                          z_min=_NPC_SAFE_XZ_MIN, z_max=_NPC_SAFE_XZ_MAX,
                          max_layers=None):
-    """Lay out n points in a compact grid around origin, then layers +Y.
+    """Lay out n points with unique (x,z) — never stack two on the same cell.
 
-    X/Z stay inside [x_min,x_max] x [z_min,z_max] so placements don't walk
-    off the island. Extra NPCs stack upward (never downward into the
-    void); if max_layers is given, layers are capped there instead of
-    growing without bound (used when the island's real height is known).
+    Fills a compact grid around origin inside the safe band, then +Y layers.
+    If the island height caps layers before all NPCs fit, spacing is tightened
+    so every index still gets a distinct XZ (game + map both collapse
+    identical positions into one visible NPC).
     """
     ox, oz = _clamp_xz(origin_x, origin_z, x_min, x_max, z_min, z_max)
     oy = float(origin_y)
-    x_span = max(0.0, x_max - x_min)
-    z_span = max(0.0, z_max - z_min)
-    max_cols = max(1, int(x_span // _NPC_GRID_SPACING) + 1)
-    max_rows = max(1, int(z_span // _NPC_GRID_SPACING) + 1)
-    # Prefer a roughly square footprint, but never exceed either span.
-    cols = min(max_cols, max(1, int(n ** 0.5) + 1))
-    per_layer = cols * max_rows
-    out = []
-    for i in range(n):
-        layer = i // per_layer
-        if max_layers is not None:
-            layer = min(layer, max_layers - 1)
-        rem = i % per_layer
-        col = rem % cols
-        row = rem // cols
-        # Center the grid on origin as much as possible
-        gx = ox + (col - (cols - 1) / 2.0) * _NPC_GRID_SPACING
-        gz = oz + (row - (max_rows - 1) / 2.0) * _NPC_GRID_SPACING
-        gx, gz = _clamp_xz(gx, gz, x_min, x_max, z_min, z_max)
-        gy = oy + layer * _NPC_LAYER_DY
-        out.append((gx, gy, gz))
-    return out
+    x_span = max(1.0, float(x_max) - float(x_min))
+    z_span = max(1.0, float(z_max) - float(z_min))
+    layers = max_layers if (max_layers and max_layers > 0) else 256
+    layers = max(1, int(layers))
+
+    # Start with preferred spacing; shrink until n fits with unique XZ cells.
+    spacing = float(_NPC_GRID_SPACING)
+    positions = []
+    for _attempt in range(12):
+        max_cols = max(1, int(x_span / spacing) + 1)
+        max_rows = max(1, int(z_span / spacing) + 1)
+        per_layer = max_cols * max_rows
+        capacity = per_layer * layers
+        if capacity >= n or spacing <= 1.0:
+            cols = min(max_cols, max(1, int((min(n, per_layer)) ** 0.5) + 1))
+            rows = max(1, min(max_rows, (min(n, per_layer) + cols - 1) // cols))
+            per_layer = cols * rows
+            positions = []
+            used = set()
+            for i in range(n):
+                layer = min(i // per_layer, layers - 1)
+                rem = i % per_layer
+                # If past capacity, walk unique slots with a linear probe
+                if i >= per_layer * layers:
+                    rem = i % (cols * rows)
+                    layer = layers - 1
+                col = rem % cols
+                row = rem // cols
+                gx = ox + (col - (cols - 1) / 2.0) * spacing
+                gz = oz + (row - (rows - 1) / 2.0) * spacing
+                gx, gz = _clamp_xz(gx, gz, x_min, x_max, z_min, z_max)
+                gy = oy + layer * _NPC_LAYER_DY
+                key = (round(gx, 2), round(gz, 2), round(gy, 2))
+                # Probe along +X then +Z for a free cell inside the band
+                probe = 0
+                while key in used and probe < 10000:
+                    probe += 1
+                    gx2 = gx + (probe % max_cols) * max(1.0, spacing * 0.5)
+                    gz2 = gz + (probe // max_cols) * max(1.0, spacing * 0.5)
+                    gx2, gz2 = _clamp_xz(gx2, gz2, x_min, x_max, z_min, z_max)
+                    key = (round(gx2, 2), round(gz2, 2), round(gy, 2))
+                    if key not in used:
+                        gx, gz = gx2, gz2
+                        break
+                if key in used:
+                    # last resort: nudge Y slightly so the triple is unique
+                    gy = oy + layer * _NPC_LAYER_DY + (probe * 0.05)
+                    key = (round(gx, 2), round(gz, 2), round(gy, 2))
+                used.add(key)
+                positions.append((gx, gy, gz))
+            break
+        spacing = max(1.0, spacing * 0.75)
+
+    if len(positions) != n:
+        # Absolute fallback: line along X at origin Z
+        positions = []
+        for i in range(n):
+            gx = x_min + (i % max(1, int(x_span))) * 1.0
+            gz = z_min + (i // max(1, int(x_span))) * 1.0
+            gx, gz = _clamp_xz(gx, gz, x_min, x_max, z_min, z_max)
+            gy = oy + (i // max(1, int(x_span * z_span))) * _NPC_LAYER_DY
+            positions.append((gx, gy, gz))
+    return positions
+
 
 
 def _patch_entity_position_bytes(entity_doc_bytes, x, y, z):
@@ -5612,7 +5654,7 @@ class App(tk.Tk):
         return None, {}
 
     def _scan_world_bkck(self, path):
-        """Yield (entry, doc, kind, nodes) for every BKCK that parses."""
+        """Yield (entry, doc, kind, nodes, container) for every BKCK that parses."""
         container = load_container(path)
         for e in container.entries:
             if e["tag"] != b"BKCK":
@@ -7404,7 +7446,7 @@ class App(tk.Tk):
             wpath = row[3]
             wname = (row[4].get("location_name") or row[2] or wpath)
             try:
-                for e, doc, kind, nodes in self._scan_world_bkck(wpath):
+                for e, doc, kind, nodes, _container in self._scan_world_bkck(wpath):
                     for npc in extract_world_npcs(nodes):
                         tmpl = npc.get("template")
                         if tmpl is None:
@@ -7439,7 +7481,8 @@ class App(tk.Tk):
         self.savefile_path.set(target_path)
         self.container = container
 
-        best = None  # (entry, doc, kind, nodes, entity_array_node, child_count)
+        # All BKCK EntityArrays we can append to (entry, doc, kind, child_n)
+        hosts = []
         origin = None
         pad_y = None
         for e in container.entries:
@@ -7473,92 +7516,152 @@ class App(tk.Tk):
             if earr is None:
                 continue
             child_n = len(earr.get("children") or [])
-            if best is None or child_n > best[5]:
-                best = (e, doc, kind, nodes, earr, child_n)
+            hosts.append((e, doc, kind, child_n))
 
-        if best is None:
+        if not hosts:
             messagebox.showerror(
                 "No EntityArray",
                 "Target world has no EntityArray to insert into.\n"
                 "Open a world that already has at least one entity.")
             return
 
-        e, doc, kind, nodes, earr, child_n = best
+        # Prefer emptier arrays first so we don't bloat one huge BKCK.
+        hosts.sort(key=lambda h: h[3])
+
         if origin is None:
             origin = (64.5, 60.0, 64.5)
         ox, oy, oz = float(origin[0]), float(origin[1]), float(origin[2])
         if pad_y is not None:
             oy = float(pad_y)
-        positions = _npc_grid_positions(len(items), ox, oy, oz)
+
+        # Island-aware safe band when we can resolve dims
+        width = height = depth = None
+        try:
+            width, height, depth = self._lookup_target_island_dims(target_path)
+        except Exception:
+            pass
+        if width or depth:
+            x_min, x_max, z_min, z_max = npc_safe_xz_band(width, depth)
+        else:
+            x_min = z_min = _NPC_SAFE_XZ_MIN
+            x_max = z_max = _NPC_SAFE_XZ_MAX
+        try:
+            max_layers = npc_max_layers(oy, height)
+        except Exception:
+            max_layers = None
+
+        positions = _npc_grid_positions(
+            len(items), ox, oy, oz,
+            x_min, x_max, z_min, z_max, max_layers)
+        uniq = len(set((round(p[0], 2), round(p[1], 2), round(p[2], 2))
+                       for p in positions))
         self.log(
             "Collect NPCs: origin=(%.1f, %.1f, %.1f)  "
-            "safe XZ [%.0f, %.0f]  spacing=%.0f  layers +Y %.0f"
-            % (ox, oy, oz, _NPC_SAFE_XZ_MIN, _NPC_SAFE_XZ_MAX,
-               _NPC_GRID_SPACING, _NPC_LAYER_DY))
+            "XZ [%.0f..%.0f]×[%.0f..%.0f]  dims=%s×%s×%s  "
+            "positions=%d unique=%d"
+            % (ox, oy, oz, x_min, x_max, z_min, z_max,
+               width, height, depth, len(positions), uniq))
 
-        # Build new array elements with patched positions
-        blob = bytearray()
-        next_idx = child_n
-        for i, (tcrc, (body, wname, label)) in enumerate(items):
-            x, y, z = positions[i]
+        # Split across hosts: at most MAX_NEW per EntityArray
+        MAX_NEW = 48
+        remaining = list(enumerate(items))  # (pos_index, (tcrc, (body,wname,label)))
+        total_inserted = 0
+        host_i = 0
+        # Reload container from disk before each write so offsets stay valid
+        while remaining and host_i < len(hosts) * 4:
+            host_entry, _doc0, kind, child_n = hosts[host_i % len(hosts)]
+            host_i += 1
             try:
-                body2 = _patch_entity_position_bytes(body, x, y, z)
+                container = load_container(target_path)
+                self.container = container
             except Exception as ex:
-                self.log("  skip 0x%08X position patch: %s" % (tcrc, ex))
-                body2 = body
-            blob += _encode_array_entity_element(next_idx + i, body2)
-            self.log(
-                "  + 0x%08X %-28s from %s -> (%.1f, %.1f, %.1f)"
-                % (tcrc, (label or "")[:28], wname, x, y, z))
-
-        if not blob:
-            messagebox.showinfo("Collect NPCs", "Nothing to insert.")
-            return
-
-        buf = bytearray(doc)
-        # Re-find EntityArray on this buffer (same offsets as parse of doc)
-        nodes2, _ = bson_parse(buf)
-        earr2 = None
-        for n in _walk(nodes2):
-            if n.get("key") == "EntityArray" and n.get("children") is not None:
-                earr2 = n
+                self.log("  reload failed: %s" % ex)
                 break
-        if earr2 is None:
-            messagebox.showerror("Collect NPCs", "EntityArray vanished.")
-            return
-        try:
-            bson_insert_element(buf, earr2, bytes(blob))
-        except Exception as ex:
-            messagebox.showerror("Insert failed", str(ex))
-            return
+            # re-find this entry by id
+            e = None
+            for ee in container.entries:
+                if ee.get("id") == host_entry.get("id") and ee.get("tag") == b"BKCK":
+                    e = ee
+                    break
+            if e is None:
+                continue
+            try:
+                doc, kind = unwrap(container.chunk(e), self.dctx)
+            except Exception as ex:
+                self.log("  unwrap host: %s" % ex)
+                continue
+            batch = remaining[:MAX_NEW]
+            remaining = remaining[MAX_NEW:]
+            buf = bytearray(doc)
+            try:
+                nodes2, _ = bson_parse(buf)
+            except Exception as ex:
+                self.log("  parse host: %s" % ex)
+                remaining = batch + remaining
+                continue
+            earr2 = None
+            for n in _walk(nodes2):
+                if n.get("key") == "EntityArray" and n.get("children") is not None:
+                    earr2 = n
+                    break
+            if earr2 is None:
+                remaining = batch + remaining
+                continue
+            next_idx = len(earr2.get("children") or [])
+            blob = bytearray()
+            for j, (pos_i, (tcrc, (body, wname, label))) in enumerate(batch):
+                x, y, z = positions[pos_i]
+                try:
+                    body2 = _patch_entity_position_bytes(body, x, y, z)
+                except Exception as ex:
+                    self.log("  skip 0x%08X position patch: %s" % (tcrc, ex))
+                    body2 = body
+                blob += _encode_array_entity_element(next_idx + j, body2)
+                self.log(
+                    "  + 0x%08X %-28s from %s -> (%.1f, %.1f, %.1f)"
+                    % (tcrc, (label or "")[:28], wname, x, y, z))
+            if not blob:
+                continue
+            try:
+                bson_insert_element(buf, earr2, bytes(blob))
+                bson_parse(bytearray(buf))  # verify
+            except Exception as ex:
+                self.log("  insert failed: %s" % ex)
+                remaining = batch + remaining
+                continue
+            try:
+                self.write_container(
+                    e["id"],
+                    wrap(bytes(buf), kind, self.cctx),
+                    verify_label="collect NPCs batch (%d)" % len(batch))
+                total_inserted += len(batch)
+            except Exception as ex:
+                self.log("  write failed: %s" % ex)
+                remaining = batch + remaining
+                break
 
-        new_doc = bytes(buf)
-        # Verify parse
+        # Count how many NPC Control entities are actually in the file now
+        final_n = 0
         try:
-            bson_parse(bytearray(new_doc))
-        except Exception as ex:
-            messagebox.showerror(
-                "Parse failed after insert",
-                "Aborted write: %s" % ex)
-            return
+            for _e, _d, _k, nodes, _c in self._scan_world_bkck(target_path):
+                final_n += len(extract_world_npcs(nodes))
+        except Exception:
+            pass
 
-        try:
-            self.write_container(
-                e["id"],
-                wrap(new_doc, kind, self.cctx),
-                verify_label="collect NPCs (%d)" % len(items))
-        except Exception as ex:
-            messagebox.showerror("Write failed", str(ex))
-            return
+        msg = (
+            "Inserted %d unique NPC template(s) into:\n%s\n\n"
+            "NPC Control entities now in file: %d\n"
+            "Unique grid positions planned: %d\n\n"
+            "If the map shows fewer, the game may still cull duplicates "
+            "or NPCs outside loaded chunks — check the Log.\n"
+            "Restart the game to see them."
+            % (total_inserted, target_path, final_n, uniq))
+        if remaining:
+            msg += "\n\n%d left over (no host / write failed)." % len(remaining)
+        messagebox.showinfo("Collect NPCs", msg)
+        self.log("Collect NPCs: wrote %d unique NPCs into %s (file now has %d NPC Control)"
+                 % (total_inserted, target_path, final_n))
 
-        messagebox.showinfo(
-            "Collect NPCs",
-            "Inserted %d unique NPC(s) into:\n%s\n\n"
-            "Restart the game (or reload the world) to see them.\n"
-            "Grid is clamped to XZ ~%.0f–%.0f; extra rows go UP in Y."
-            % (len(items), target_path, _NPC_SAFE_XZ_MIN, _NPC_SAFE_XZ_MAX))
-        self.log("Collect NPCs: wrote %d unique NPCs into %s"
-                 % (len(items), target_path))
 
 
     def open_world_map(self):
