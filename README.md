@@ -2,6 +2,19 @@ Portal Knights Save Editor
 Edit Portal Knights characters, worlds, chests, NPCs, and more.
 Needs Python 3 with tkinter (included with most Windows / macOS installs; on Linux install `python3-tk` if needed).
 ---
+Install dependencies
+Required once:
+```text
+pip install zstandard
+```
+Optional (much faster world load / save / scans):
+```text
+pip install python-snappy
+```
+If `pip` is not found: `python -m pip install zstandard` or `py -3 -m pip install zstandard`.
+The editor still runs without `python-snappy`; it just uses a slower built-in codec.
+---
+---
 Run
 Easiest: double-click `pk_save_editor.py`  
 (A console window may open behind the GUI — that is normal.)
@@ -17,19 +30,6 @@ Windows (if double-click does nothing useful):
 ```text
 py -3 pk_save_editor.py
 ```
----
-Install dependencies
-Required once:
-```text
-pip install zstandard
-```
-Optional (much faster world load / save / scans):
-```text
-pip install python-snappy
-```
-If `pip` is not found: `python -m pip install zstandard` or `py -3 -m pip install zstandard`.
-The editor still runs without `python-snappy`; it just uses a slower built-in codec.
----
 Setup
 Normal use — run the script. It can download the item list from GitHub and cache it next to the program.
 If you want to add or rename NPCs / furniture / templates — keep a local `pk_templates.json` next to the script. Name changes are saved there (remote download alone is read-only for your custom names).
