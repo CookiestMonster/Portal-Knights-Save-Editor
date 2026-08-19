@@ -1,7 +1,8 @@
 Portal Knights Save Editor
 Edit Portal Knights characters, worlds, chests, NPCs, and more.
-Video With Explanation 
-[![Watch the video](https://youtube.com)](https://youtu.be/QU340dVxTjY)
+
+[![Watch the video for more explation](https://youtube.com)](https://youtu.be/QU340dVxTjY)
+
 Needs Python 3 with tkinter (included with most Windows / macOS installs; on Linux install `python3-tk` if needed).
 ---
 Install dependencies
