@@ -1868,77 +1868,85 @@ def extract_world_chests(nodes):
     return out
 
 
+
+def _decode_ues_text(value):
+    """Decode User Editable String payload (BSON string or binary)."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        raw = bytes(value)
+        # binary field may include a trailing NUL
+        if b"\x00" in raw:
+            raw = raw.split(b"\x00")[0]
+        return raw.decode("utf-8", "replace")
+    return str(value)
+
+
+def _ues_from_entity(ent):
+    """Return (comp_node, text, text_node, was_edited) or (None, "", None, None)."""
+    sign_comp = None
+    for n in _walk([ent]):
+        if n.get("key") == "User Editable String Component" and n.get("children") is not None:
+            sign_comp = n
+            break
+    if sign_comp is None:
+        return None, "", None, None
+    text_node = None
+    was_edited = None
+    text = ""
+    for ch in sign_comp.get("children") or []:
+        k = ch.get("key")
+        if k == "wasEdited":
+            was_edited = ch.get("value")
+        if k in ("string", "text", "Text", "value") and ch.get("value") is not None:
+            text_node = ch
+            text = _decode_ues_text(ch.get("value"))
+    # Fallback: any string/binary child under the component
+    if text_node is None:
+        for ch in sign_comp.get("children") or []:
+            if ch.get("type") in (0x02, 0x05) and ch.get("value") is not None:
+                text_node = ch
+                text = _decode_ues_text(ch.get("value"))
+                break
+    return sign_comp, text, text_node, was_edited
+
+
 def extract_world_signs(nodes):
     """List sign-like entities (User Editable String Component).
 
-    Tutorial / custom signs often have only wasEdited=False and no stored
-    string — the game fills default text from the TemplateCRC. Those still
-    count as signs. NPCs that also carry the component are skipped.
+    When wasEdited is False the save often stores no string — the game shows
+    default text for that TemplateCRC. Those signs are still listed so you
+    can find them; text may be empty until edited in-game or here.
+    NPCs that also carry the component are skipped (see extract_world_npcs).
     """
     out = []
     for ent in iter_entities(nodes):
-        sign_comp = None
         has_npc = False
         for n in _walk([ent]):
-            if n["key"] == "User Editable String Component" and n.get("children") is not None:
-                sign_comp = n
-            if n["key"] == "NPC Control Component":
+            if n.get("key") == "NPC Control Component":
                 has_npc = True
-        if sign_comp is None or has_npc:
+                break
+        if has_npc:
             continue
-        text_node = None
-        was_edited = None
-        for ch in sign_comp.get("children") or []:
-            if ch["key"] in ("string", "text", "Text", "value") and ch.get("value") is not None:
-                text_node = ch
-            if ch["key"] == "wasEdited":
-                was_edited = ch.get("value")
-        if text_node is None:
-            for ch in sign_comp.get("children") or []:
-                if ch.get("type") in (0x02, 0x05) and ch.get("value") is not None:
-                    text_node = ch
-                    break
-        text = ""
-        if text_node is not None:
-            val = text_node.get("value")
-            if isinstance(val, (bytes, bytearray)):
-                try:
-                    text = val.decode("utf-8", errors="replace")
-                except Exception:
-                    text = repr(val)
-            elif val is not None:
-                text = str(val)
-        tmpl = _entity_template_crc(ent)
-        pos = _entity_position(ent)
-        if not pos:
+        sign_comp, text, text_node, was_edited = _ues_from_entity(ent)
+        if sign_comp is None:
             continue
         out.append({
             "entity": ent,
-            "pos": pos,
-            "template": tmpl,
-            "text": text,
+            "pos": _entity_position(ent),
+            "template": _entity_template_crc(ent),
+            "text": text or "",
             "text_node": text_node,
             "was_edited": was_edited,
+            "component": sign_comp,
         })
     return out
 
 
-
-def landing_pad_template_crcs():
-    """TemplateCRCs that count as landing pads (component may be absent)."""
-    out = {0x0BCB9932}
-    # Also any user/builtin template named like a landing pad
-    try:
-        for crc, name in list(WORLD_TEMPLATES.items()) + list(NPC_TEMPLATES.items()):
-            if name and "landing pad" in str(name).lower():
-                out.add(int(crc) & 0xFFFFFFFF)
-    except Exception:
-        pass
-    return out
-
-
 def extract_world_npcs(nodes):
-    """Entities with NPC Control Component: pos, template, entity."""
+    """Entities with NPC Control Component: pos, template, optional custom text."""
     out = []
     for ent in iter_entities(nodes):
         has_npc = False
@@ -1948,12 +1956,17 @@ def extract_world_npcs(nodes):
                 break
         if not has_npc:
             continue
+        _comp, text, text_node, was_edited = _ues_from_entity(ent)
         out.append({
             "entity": ent,
             "pos": _entity_position(ent),
             "template": _entity_template_crc(ent),
+            "text": text or "",
+            "text_node": text_node,
+            "was_edited": was_edited,
         })
     return out
+
 
 
 def extract_world_all_templates(nodes):
@@ -3869,16 +3882,26 @@ def extract_island_seed_and_size(doc):
     return out
 
 
+def program_dir():
+    """Folder containing this script (where pk_dict.bin should live)."""
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def default_dict_path():
+    """Preferred path: pk_dict.bin next to the program."""
+    return os.path.join(program_dir(), "pk_dict.bin")
+
+
 def guess_dict_path():
+    """Find an existing pk_dict.bin — prefer next to the script."""
     userprofile = os.environ.get("USERPROFILE", "")
-    here = os.path.dirname(os.path.abspath(__file__))
     candidates = [
+        default_dict_path(),
         os.path.join(userprofile, "Desktop", "pk_dict.bin"),
         os.path.join(userprofile, "Downloads", "pk_dict.bin"),
-        os.path.join(here, "pk_dict.bin"),
     ]
     for c in candidates:
-        if os.path.isfile(c):
+        if c and os.path.isfile(c):
             return c
     return ""
 
@@ -4097,8 +4120,7 @@ class App(tk.Tk):
                       "point at it manually.")
             return
         exe_path = exes[0]
-        userprofile = os.environ.get("USERPROFILE", os.path.expanduser("~"))
-        dest = os.path.join(userprofile, "Desktop", "pk_dict.bin")
+        dest = default_dict_path()
         try:
             extract_dict_from_exe(exe_path, dest)
         except Exception as exc:
@@ -4709,8 +4731,7 @@ class App(tk.Tk):
             if not exe_path:
                 return
 
-        userprofile = os.environ.get("USERPROFILE", os.path.expanduser("~"))
-        dest = os.path.join(userprofile, "Desktop", "pk_dict.bin")
+        dest = default_dict_path()
         try:
             extract_dict_from_exe(exe_path, dest)
         except Exception as exc:
@@ -6698,16 +6719,17 @@ class App(tk.Tk):
 
         island_name = (info.get("location_name") or
                        info.get("label") or os.path.basename(path))
-        cols = ("idx", "name", "kind", "islands", "x", "y", "z", "template", "chunk")
+        cols = ("idx", "name", "kind", "islands", "x", "y", "z", "text", "template", "chunk")
         tree = ttk.Treeview(dlg, columns=cols, show="headings", height=16,
                             selectmode="extended")
-        for col, text, w in (("idx", "#", 40),
-                             ("name", "Name", 200),
-                             ("kind", "Kind", 55),
-                             ("islands", "Seen on", 140),
-                             ("x", "X", 60), ("y", "Y", 50), ("z", "Z", 60),
-                             ("template", "TemplateCRC", 110),
-                             ("chunk", "Chunk id", 80)):
+        for col, text, w in (("idx", "#", 36),
+                             ("name", "Name", 160),
+                             ("kind", "Kind", 50),
+                             ("islands", "Seen on", 110),
+                             ("x", "X", 52), ("y", "Y", 48), ("z", "Z", 52),
+                             ("text", "Custom text", 160),
+                             ("template", "TemplateCRC", 100),
+                             ("chunk", "Chunk id", 72)):
             tree.heading(col, text=text)
             tree.column(col, width=w, anchor="w")
         tree.pack(fill="both", expand=True, padx=8, pady=4)
@@ -6744,6 +6766,12 @@ class App(tk.Tk):
                 seen_disp = iname if not seen_disp else (seen_disp + ", " + iname)
             eid_u = _fmt_u32(e.get("id") if isinstance(e, dict) else None)
             eid_s = ("%08X" % eid_u) if eid_u is not None else "?"
+            raw_txt = ""
+            if isinstance(npc, dict):
+                raw_txt = (npc.get("text") or "").strip()
+                if not raw_txt and npc.get("was_edited") is False:
+                    raw_txt = ""  # default dialogue not in save
+            text_disp = (raw_txt[:60] + ("…" if len(raw_txt) > 60 else "")) if raw_txt else ""
             iid = tree.insert("", "end", values=(
                 i + 1,
                 nname,
@@ -6752,6 +6780,7 @@ class App(tk.Tk):
                 _fmt_f(pos[0]) if pos[0] is not None else "?",
                 _fmt_f(pos[1]) if pos[1] is not None else "?",
                 _fmt_f(pos[2]) if pos[2] is not None else "?",
+                text_disp,
                 tmpl_s,
                 eid_s,
             ))
