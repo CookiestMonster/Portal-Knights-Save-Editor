@@ -2140,6 +2140,11 @@ def _encode_array_entity_element(index, entity_doc_bytes):
     return bytes([0x03]) + key + b"\x00" + entity_doc_bytes
 
 
+def landing_pad_template_crcs():
+    """Known Landing Pad TemplateCRC values."""
+    return {0x0BCB9932}
+
+
 def extract_world_landing_pads(nodes):
     """List landing pads: Server LandingPad Component OR Landing Pad template.
 
@@ -2171,6 +2176,98 @@ def extract_world_landing_pads(nodes):
             "template": tmpl,
         })
     return out
+
+
+
+def extract_bkck_voxels(nodes, chunk_entry_id=None):
+    """Parse BKCK Chunk.voxelData (32^3 = 32768 bytes).
+
+    Returns list of dicts:
+      chunk_id, entry_id, voxel (bytes|None), non_zero (list of (index, value)),
+      hist (Counter-like dict of value->count for non-air).
+    Index heuristic: i = x + 32*y + 1024*z (local 0..31); not fully proven.
+    """
+    out = []
+    # Prefer top-level Chunk document shape
+    for n in nodes:
+        if n.get("key") != "Chunk" or not n.get("children"):
+            continue
+        chunk_id = chunk_entry_id
+        voxel = None
+        for ch in n["children"]:
+            if ch.get("key") == "id" and ch.get("children") is None:
+                try:
+                    chunk_id = int(ch.get("value"))
+                except (TypeError, ValueError):
+                    pass
+            if ch.get("key") == "voxelData" and isinstance(ch.get("value"), (bytes, bytearray)):
+                voxel = bytes(ch.get("value"))
+        if voxel is None:
+            continue
+        nz = [(i, b) for i, b in enumerate(voxel) if b != 0]
+        hist = {}
+        for _, b in nz:
+            hist[b] = hist.get(b, 0) + 1
+        out.append({
+            "chunk_id": chunk_id,
+            "entry_id": chunk_entry_id,
+            "voxel": voxel,
+            "non_zero": nz,
+            "hist": hist,
+            "size": len(voxel),
+        })
+    return out
+
+
+def voxel_index_xyz(i):
+    """Local coords from Morton (Z-order) 3D index in a 32³ chunk.
+
+    Bits of the linear index are interleaved: bit 3k→x, 3k+1→y, 3k+2→z.
+    Verified against:
+      - landing-pad surface (251): 4×4 at fixed y
+      - vertical stack of 3: consecutive y, fixed x/z
+    y is the vertical axis within the chunk.
+    """
+    x = y = z = 0
+    for b in range(5):  # 0..31
+        x |= ((i >> (3 * b)) & 1) << b
+        y |= ((i >> (3 * b + 1)) & 1) << b
+        z |= ((i >> (3 * b + 2)) & 1) << b
+    return (x, y, z)
+
+
+def voxel_xyz_index(x, y, z):
+    """Inverse of voxel_index_xyz — Morton encode (x,y,z) → linear index."""
+    i = 0
+    for b in range(5):
+        i |= ((x >> b) & 1) << (3 * b)
+        i |= ((y >> b) & 1) << (3 * b + 1)
+        i |= ((z >> b) & 1) << (3 * b + 2)
+    return i
+
+
+KNOWN_VOXEL_BLOCKS = {
+    0: "air",
+    1: "dirt",
+    2: "soil",
+    7: "dark parquet",
+    8: "parquet",
+    10: "coal",
+    13: "polished gray wood",
+    14: "polished dark wood",
+    15: "polished wood",
+    16: "wood",
+    18: "polished bamboo",
+    49: "sand",
+    50: "straw",
+    51: "snowblock",
+    244: "pad-detail",
+    251: "landing-pad",  # surface; 16 cells = 4x4x1
+    252: "pad-extra?",
+}
+# Block line under Edna (L→R): soil,sand,straw,wood,polished wood,parquet,
+# dark parquet,polished dark wood,polished gray wood,polished bamboo,coal,snow
+# matched by reverse index order (coal=10 & snow=51 at end).
 
 
 def count_inventory_entities_in_doc(doc):
@@ -3887,18 +3984,66 @@ def program_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def _dir_is_writable(folder):
+    """True if we can create a file here (Program Files often is not)."""
+    if not folder:
+        return False
+    try:
+        os.makedirs(folder, exist_ok=True)
+    except OSError:
+        return False
+    test = os.path.join(folder, ".pk_write_test_%d" % os.getpid())
+    try:
+        with open(test, "wb") as fh:
+            fh.write(b"0")
+        os.remove(test)
+        return True
+    except OSError:
+        try:
+            if os.path.exists(test):
+                os.remove(test)
+        except OSError:
+            pass
+        return False
+
+
+def user_data_dir():
+    """Writable per-user folder when the install dir is locked."""
+    if sys.platform == "win32":
+        base = (os.environ.get("LOCALAPPDATA")
+                or os.environ.get("APPDATA")
+                or os.path.join(os.environ.get("USERPROFILE",
+                                 os.path.expanduser("~")), "AppData", "Local"))
+        path = os.path.join(base, "PortalKnightsSaveEditor")
+    else:
+        path = os.path.join(os.path.expanduser("~"),
+                            ".portal_knights_save_editor")
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError:
+        path = os.path.join(
+            __import__("tempfile").gettempdir(), "PortalKnightsSaveEditor")
+        os.makedirs(path, exist_ok=True)
+    return path
+
+
 def default_dict_path():
-    """Preferred path: pk_dict.bin next to the program."""
-    return os.path.join(program_dir(), "pk_dict.bin")
+    """Write pk_dict.bin next to the program if allowed, else user data."""
+    prog = program_dir()
+    if _dir_is_writable(prog):
+        return os.path.join(prog, "pk_dict.bin")
+    return os.path.join(user_data_dir(), "pk_dict.bin")
 
 
 def guess_dict_path():
-    """Find an existing pk_dict.bin — prefer next to the script."""
+    """Find an existing pk_dict.bin — script dir, user data, common spots."""
     userprofile = os.environ.get("USERPROFILE", "")
     candidates = [
-        default_dict_path(),
+        os.path.join(program_dir(), "pk_dict.bin"),
+        os.path.join(user_data_dir(), "pk_dict.bin"),
         os.path.join(userprofile, "Desktop", "pk_dict.bin"),
         os.path.join(userprofile, "Downloads", "pk_dict.bin"),
+        os.path.join(userprofile, "Downloads", "PK Manager", "pk_dict.bin"),
     ]
     for c in candidates:
         if c and os.path.isfile(c):
@@ -3973,12 +4118,29 @@ def extract_dict_from_exe(exe_path, dest_path):
             "magic number (37 A4 30 EC) - got %s instead. This exe is "
             "probably a different version than the offset was taken from."
             % (DICT_OFFSET, data[:4].hex()))
+    dest_dir = os.path.dirname(os.path.abspath(dest_path)) or "."
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+    except OSError:
+        pass
+    if not _dir_is_writable(dest_dir):
+        dest_path = os.path.join(user_data_dir(), "pk_dict.bin")
+        dest_dir = os.path.dirname(dest_path)
+        os.makedirs(dest_dir, exist_ok=True)
     tmp_path = dest_path + ".tmp-%d" % os.getpid()
-    with open(tmp_path, "wb") as fh:
-        fh.write(data)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp_path, dest_path)
+    try:
+        with open(tmp_path, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, dest_path)
+    except Exception:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
     return dest_path
 
 
@@ -4112,7 +4274,10 @@ class App(tk.Tk):
         try to pull it from the game exe automatically - no button click
         needed. Only falls back to asking the user if that doesn't work."""
         if self.dictfile_path.get():
-            return  # guess_dict_path() already found one - nothing to do
+            return
+        if getattr(self, "_auto_dict_tried", False):
+            return
+        self._auto_dict_tried = True
         exes = find_game_exe()
         if not exes:
             self.log("No pk_dict.bin found, and couldn't find the game "
@@ -4122,9 +4287,11 @@ class App(tk.Tk):
         exe_path = exes[0]
         dest = default_dict_path()
         try:
-            extract_dict_from_exe(exe_path, dest)
+            dest = extract_dict_from_exe(exe_path, dest)
         except Exception as exc:
             self.log("Auto-extraction from %s failed: %s" % (exe_path, exc))
+            self.log("Tip: copy pk_dict.bin next to the program, or into "
+                      "%%LOCALAPPDATA%%\\PortalKnightsSaveEditor")
             return
         self.dictfile_path.set(dest)
         self.log("Auto-extracted dictionary from %s -> %s" % (exe_path, dest))
@@ -4342,6 +4509,10 @@ class App(tk.Tk):
         self.world_map_btn = ttk.Button(
             world_actions2, text="Map…", command=self.open_world_map)
         self.world_map_btn.pack(side="left", padx=4)
+        self.world_voxels_btn = ttk.Button(
+            world_actions2, text="Terrain / voxels…",
+            command=self.open_world_voxels)
+        self.world_voxels_btn.pack(side="left", padx=4)
         ttk.Button(world_actions2, text="Templates…",
                    command=self.open_template_editor).pack(side="left", padx=4)
         ttk.Button(
@@ -4733,7 +4904,7 @@ class App(tk.Tk):
 
         dest = default_dict_path()
         try:
-            extract_dict_from_exe(exe_path, dest)
+            dest = extract_dict_from_exe(exe_path, dest)
         except Exception as exc:
             self.log("Dictionary extraction failed: %s" % exc)
             messagebox.showerror("Extraction failed", str(exc))
@@ -6500,6 +6671,253 @@ class App(tk.Tk):
 
         ttk.Button(dlg, text="Close", command=dlg.destroy).pack(pady=6)
 
+
+    def open_world_voxels(self):
+        """Inspect BKCK voxelData — 1 cell = 1 block; pad surface = id 251 (16)."""
+        path, info = self._resolve_world_path()
+        if not path:
+            messagebox.showinfo(
+                "No world",
+                "Select a world file first (Worlds tab).")
+            return
+        if not self._ensure_dict():
+            return
+        try:
+            scanned = list(self._scan_world_bkck(path))
+        except Exception as exc:
+            messagebox.showerror("Save file error", str(exc))
+            return
+
+        rows = []
+        chunk_summaries = []
+        total_nz = 0
+        for e, doc, kind, nodes, container in scanned:
+            for vx in extract_bkck_voxels(nodes, e.get("id")):
+                nz = vx["non_zero"]
+                total_nz += len(nz)
+                chunk_summaries.append(vx)
+                by_val = {}
+                for i, b in nz:
+                    by_val.setdefault(b, []).append(i)
+                for val, idxs in sorted(by_val.items()):
+                    idxs = sorted(idxs)
+                    x, y, z = voxel_index_xyz(idxs[0])
+                    sample = "%d,%d,%d" % (x, y, z)
+                    if len(idxs) > 1:
+                        x2, y2, z2 = voxel_index_xyz(idxs[-1])
+                        sample += " .. %d,%d,%d" % (x2, y2, z2)
+                    note = ""
+                    if val == 251 and len(idxs) == 16:
+                        note = " (4x4 pad)"
+                    rows.append({
+                        "chunk_id": vx["chunk_id"],
+                        "entry_id": e.get("id"),
+                        "value": val,
+                        "name": KNOWN_VOXEL_BLOCKS.get(val, "?") + note,
+                        "count": len(idxs),
+                        "sample": sample,
+                        "indices": idxs,
+                    })
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Terrain / voxels — %s" % (
+            info.get("location_name") or os.path.basename(path)))
+        dlg.geometry("1100x600")
+        ttk.Label(
+            dlg,
+            text=(
+                "1 voxel byte = 1 block. Non-air: %d in %d chunk(s). "
+                "Landing-pad surface = id 251 (expect 16 = 4×4×1). "
+                "Id 244 = pad detail/glow (not counted as the 16). "
+                "Dirt=1, coal=10. Slice: X/Z top-down at height Y (Morton 32³). y = up."
+                % (total_nz, len(chunk_summaries))
+            ),
+            wraplength=1060,
+        ).pack(anchor="w", padx=8, pady=4)
+
+        body = ttk.Frame(dlg)
+        body.pack(fill="both", expand=True, padx=6, pady=4)
+        left = ttk.Frame(body)
+        left.pack(side="left", fill="both", expand=True)
+        right = ttk.Frame(body, width=360)
+        right.pack(side="right", fill="y", padx=(8, 0))
+        right.pack_propagate(False)
+
+        cols = ("chunk", "value", "name", "count", "local_xyz")
+        tree = ttk.Treeview(left, columns=cols, show="headings", height=20,
+                            selectmode="browse")
+        for col, text, w in (
+            ("chunk", "Chunk", 70),
+            ("value", "Block id", 70),
+            ("name", "Name", 140),
+            ("count", "Blocks", 60),
+            ("local_xyz", "Local xyz", 220),
+        ):
+            tree.heading(col, text=text)
+            tree.column(col, width=w, anchor="w")
+        ysb = ttk.Scrollbar(left, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=ysb.set)
+        tree.pack(side="left", fill="both", expand=True)
+        ysb.pack(side="right", fill="y")
+
+        row_data = {}
+        for r in rows:
+            iid = tree.insert("", "end", values=(
+                r["chunk_id"], r["value"], r["name"], r["count"], r["sample"],
+            ))
+            row_data[iid] = r
+
+        ttk.Label(right, text="2.5D slice (32×32 blocks)").pack(anchor="w")
+        ctl = ttk.Frame(right)
+        ctl.pack(fill="x", pady=4)
+        chunk_ids = sorted({vx["chunk_id"] for vx in chunk_summaries}) or [0]
+        # Prefer chunk with most non-air
+        best_c = max(chunk_summaries, key=lambda v: len(v["non_zero"]))[
+            "chunk_id"] if chunk_summaries else chunk_ids[0]
+        chunk_var = tk.StringVar(value=str(best_c))
+        ttk.Label(ctl, text="Chunk").grid(row=0, column=0, sticky="w")
+        chunk_cb = ttk.Combobox(
+            ctl, textvariable=chunk_var, width=8,
+            values=[str(c) for c in chunk_ids], state="readonly")
+        chunk_cb.grid(row=0, column=1, sticky="w", padx=4)
+
+        # Default Z = layer with most solids in best chunk
+        def _best_z(vx):
+            from collections import Counter
+            ys = Counter(voxel_index_xyz(i)[1] for i, _b in vx["non_zero"])
+            return ys.most_common(1)[0][0] if ys else 0
+
+        default_z = 0
+        for vx in chunk_summaries:
+            if vx["chunk_id"] == best_c:
+                default_z = _best_z(vx)
+                break
+        layer_var = tk.IntVar(value=default_z)
+        ttk.Label(ctl, text="Y height").grid(row=1, column=0, sticky="w")
+        layer_scale = ttk.Scale(ctl, from_=0, to=31, orient="horizontal")
+        layer_scale.set(default_z)
+        layer_scale.grid(row=1, column=1, sticky="ew", padx=4)
+        layer_lbl = ttk.Label(ctl, text=str(default_z))
+        layer_lbl.grid(row=1, column=2, sticky="w")
+        ctl.columnconfigure(1, weight=1)
+
+        cell = 10
+        canvas = tk.Canvas(right, width=32 * cell + 1, height=32 * cell + 1,
+                           bg="#1a1a22", highlightthickness=0)
+        canvas.pack(pady=6)
+        legend = ttk.Label(right, text="", wraplength=340)
+        legend.pack(anchor="w")
+
+        def _color_for(val):
+            known = {
+                0: "#1a1a22",
+                1: "#8B5A2B",
+                10: "#2F2F2F",
+                244: "#3D5A80",
+                251: "#5B8DEF",
+            }
+            if val in known:
+                return known[val]
+            h = (val * 37) & 0xFF
+            return "#%02x%02x%02x" % (40 + (h % 180), 40 + ((h * 3) % 180),
+                                       40 + ((h * 7) % 180))
+
+        by_chunk = {vx["chunk_id"]: vx for vx in chunk_summaries}
+
+        def redraw(*_a):
+            try:
+                cid = int(chunk_var.get())
+            except ValueError:
+                return
+            y_layer = int(float(layer_scale.get()))
+            layer_var.set(y_layer)
+            layer_lbl.config(text=str(y_layer))
+            canvas.delete("all")
+            for g in range(33):
+                canvas.create_line(g * cell, 0, g * cell, 32 * cell, fill="#2a2a33")
+                canvas.create_line(0, g * cell, 32 * cell, g * cell, fill="#2a2a33")
+            vx = by_chunk.get(cid)
+            counts = {}
+            if vx and vx.get("voxel"):
+                vox = vx["voxel"]
+                for x in range(32):
+                    for z in range(32):
+                        i = voxel_xyz_index(x, y_layer, z)
+                        if i >= len(vox):
+                            continue
+                        b = vox[i]
+                        if b == 0:
+                            continue
+                        counts[b] = counts.get(b, 0) + 1
+                        canvas.create_rectangle(
+                            x * cell + 1, z * cell + 1,
+                            (x + 1) * cell, (z + 1) * cell,
+                            fill=_color_for(b), outline="")
+            parts = ["Y=%d chunk=%s" % (y_layer, cid)]
+            for b, n in sorted(counts.items()):
+                nm = KNOWN_VOXEL_BLOCKS.get(b, "?")
+                parts.append("%s(%d)×%d" % (nm, b, n))
+            legend.config(
+                text="  |  ".join(parts) if counts else
+                "Y=%d chunk=%s — empty" % (z, cid))
+
+        layer_scale.configure(command=lambda v: redraw())
+        chunk_cb.bind("<<ComboboxSelected>>", lambda e: redraw())
+
+        def on_tree_select(_evt=None):
+            sel = tree.selection()
+            if not sel:
+                return
+            r = row_data.get(sel[0])
+            if not r:
+                return
+            chunk_var.set(str(r["chunk_id"]))
+            if r["indices"]:
+                _x, y0, _z = voxel_index_xyz(r["indices"][0])
+                layer_scale.set(y0)
+            redraw()
+
+        tree.bind("<<TreeviewSelect>>", on_tree_select)
+        redraw()
+
+        logf = ttk.Frame(dlg)
+        logf.pack(fill="x", padx=8, pady=4)
+        ttk.Button(
+            logf, text="Log selected indices",
+            command=lambda: self._voxel_log_selected(tree, row_data),
+        ).pack(side="left")
+        ttk.Button(
+            logf, text="Log all non-air",
+            command=lambda: self._voxel_log_all(rows),
+        ).pack(side="left", padx=6)
+        ttk.Button(logf, text="Close", command=dlg.destroy).pack(side="right")
+
+        if not rows:
+            messagebox.showinfo(
+                "Terrain / voxels",
+                "No non-air voxels in BKCK Chunk.voxelData.\n"
+                "Empty creative ground may only use FLCK columnSet.",
+                parent=dlg)
+
+    def _voxel_log_selected(self, tree, row_data):
+        sel = tree.selection()
+        if not sel:
+            return
+        r = row_data.get(sel[0])
+        if not r:
+            return
+        self.log(
+            "Voxel chunk=%s id=%s blocks=%d indices=%s"
+            % (r["chunk_id"], r["value"], r["count"],
+               r["indices"][:40] if len(r["indices"]) > 40 else r["indices"]))
+
+    def _voxel_log_all(self, rows):
+        self.log("Voxel dump: %d group(s)" % len(rows))
+        for r in rows:
+            self.log(
+                "  chunk=%s block=%s (%s) x%d local=%s"
+                % (r["chunk_id"], r["value"], r["name"], r["count"], r["sample"]))
+
     def open_world_signs(self):
         """List and edit User Editable String Component texts (signs)."""
         path, info = self._resolve_world_path()
@@ -7762,11 +8180,72 @@ class App(tk.Tk):
                 others.append(o)
                 claimed.add(pk)
 
+        # Terrain voxels (Morton 32³ per BKCK chunk)
+        terrain_chunks = {}  # chunk_id -> list of (lx, ly, lz, block_id)
+        for e, doc, kind, nodes, container in scanned:
+            for vx in extract_bkck_voxels(nodes, e.get("id")):
+                cid = vx["chunk_id"]
+                cells = []
+                for i, b in vx["non_zero"]:
+                    lx, ly, lz = voxel_index_xyz(i)
+                    cells.append((lx, ly, lz, b))
+                if cells:
+                    terrain_chunks[cid] = cells
+
+        # Anchor: map local → world using landing-pad surface (251) when present
+        terrain_origin = {}  # chunk_id -> (ox, oz) such that world = origin + local
+        pad_world = None
+        if pads and pads[0].get("pos"):
+            pad_world = pads[0]["pos"]  # x,y,z
+        pad_cid = None
+        pad_local_c = None
+        for cid, cells in terrain_chunks.items():
+            # Surface only (251), y matching pad entity height when possible
+            pad_y = None
+            if pad_world is not None:
+                try:
+                    pad_y = int(round(pad_world[1]))
+                except Exception:
+                    pad_y = None
+            pad_cells = [
+                (x, z) for x, y, z, b in cells
+                if b == 251 and (pad_y is None or y == pad_y)
+            ]
+            if len(pad_cells) < 8:
+                pad_cells = [(x, z) for x, y, z, b in cells if b == 251]
+            if len(pad_cells) >= 8 and pad_world is not None:
+                # Block centers are at local+0.5; entity sits on pad center
+                cx = sum(p[0] + 0.5 for p in pad_cells) / len(pad_cells)
+                cz = sum(p[1] + 0.5 for p in pad_cells) / len(pad_cells)
+                ox = pad_world[0] - cx
+                oz = pad_world[2] - cz
+                terrain_origin[cid] = (ox, oz)
+                pad_cid = cid
+                pad_local_c = (cx, cz)
+                break
+        # Neighbor chunks: assume 32-block tiling; try X-adjacency by chunk id
+        if pad_cid is not None and pad_cid in terrain_origin:
+            base = terrain_origin[pad_cid]
+            for cid in terrain_chunks:
+                if cid in terrain_origin:
+                    continue
+                # Prefer X step for consecutive ids (common strip layout)
+                dx = (int(cid) - int(pad_cid)) * 32
+                terrain_origin[cid] = (base[0] + dx, base[1])
+
         pts = []
         for group in (chests, signs, npcs, pads, others):
             for it in group:
                 x, _y, z = it["pos"]
                 pts.append((x, z))
+        # include terrain extents so map zooms to blocks too
+        for cid, cells in terrain_chunks.items():
+            orig = terrain_origin.get(cid)
+            if not orig:
+                continue
+            ox, oz = orig
+            for lx, ly, lz, b in cells:
+                pts.append((ox + lx, oz + lz))
         if not pts:
             messagebox.showinfo(
                 "Empty map",
@@ -7847,8 +8326,36 @@ class App(tk.Tk):
                 show_chests.set(True), show_signs.set(True),
                 show_npcs.set(True), show_enemies.set(True),
                 show_other.set(True), show_pads.set(True),
+                show_terrain.set(True),
                 redraw())
         ).pack(side="left", padx=2)
+
+        show_terrain = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            layers, text="Terrain", variable=show_terrain,
+            command=lambda: redraw()).pack(side="left", padx=6)
+        ttk.Label(layers, text="Y").pack(side="left")
+        # Default Y = pad height or most common solid y
+        _ty_default = 10
+        if pad_world is not None:
+            try:
+                _ty_default = int(round(pad_world[1]))
+            except Exception:
+                pass
+        terrain_y = tk.IntVar(value=_ty_default)
+        terrain_y_scale = ttk.Scale(
+            layers, from_=0, to=31, orient="horizontal", length=120)
+        terrain_y_scale.set(_ty_default)
+        terrain_y_scale.pack(side="left", padx=2)
+        terrain_y_lbl = ttk.Label(layers, text=str(_ty_default))
+        terrain_y_lbl.pack(side="left")
+
+        def _on_terrain_y(_v=None):
+            y = int(float(terrain_y_scale.get()))
+            terrain_y.set(y)
+            terrain_y_lbl.config(text=str(y))
+            redraw()
+        terrain_y_scale.configure(command=_on_terrain_y)
 
         legend = ttk.Frame(dlg)
         legend.pack(fill="x", padx=8)
@@ -7969,6 +8476,47 @@ class App(tk.Tk):
                 })
                 return iid
 
+            # Terrain voxels under markers (Morton local → world via pad anchor)
+            if show_terrain.get() and terrain_chunks:
+                ty = int(terrain_y.get())
+                def _terrain_color(val):
+                    known = {
+                        1: "#8B5A2B", 2: "#6B3F1A", 7: "#4A3728",
+                        8: "#C4A574", 10: "#2F2F2F", 13: "#8A8A8A",
+                        14: "#3E2723", 15: "#A1887F", 16: "#795548",
+                        18: "#D7CCC8", 49: "#E6C88A", 50: "#F0E68C",
+                        51: "#ECEFF1", 244: "#3D5A80", 251: "#5B8DEF",
+                        252: "#7CB342",
+                    }
+                    if val in known:
+                        return known[val]
+                    h = (val * 37) & 0xFF
+                    return "#%02x%02x%02x" % (
+                        40 + (h % 180), 40 + ((h * 3) % 180),
+                        40 + ((h * 7) % 180))
+                # Draw non-pad first, then pad surface so 4x4 sits on top of dirt
+                def _draw_cells(pred):
+                    for cid, cells in terrain_chunks.items():
+                        orig = terrain_origin.get(cid)
+                        if not orig:
+                            continue
+                        ox, oz = orig
+                        for lx, ly, lz, b in cells:
+                            if ly != ty or not pred(b):
+                                continue
+                            wx = ox + lx + 0.5
+                            wz = oz + lz + 0.5
+                            cx, cy = world_to_canvas(wx, wz)
+                            hs = max(unit_x * 0.5, 1.5)
+                            vs = max(unit_z * 0.5, 1.5)
+                            canvas.create_rectangle(
+                                cx - hs, cy - vs, cx + hs, cy + vs,
+                                fill=_terrain_color(b), outline="",
+                                tags=("terrain",))
+                _draw_cells(lambda b: b not in (244, 251, 252))
+                _draw_cells(lambda b: b in (244, 252))  # pad detail / extras
+                _draw_cells(lambda b: b == 251)  # pad surface on top
+
             # Footprints: draw props first, NPCs/pads last so they stay on top.
             inv_fp = {
                 "chest":          (2, 1, "#4a90d9", False),
@@ -8087,7 +8635,7 @@ class App(tk.Tk):
                            x, y, z),
                         n, oval=True, outline="#ffffff")
 
-            # 5) Landing pad
+            # 5) Landing pad — align marker to voxel 251 bounds when known
             if show_pads.get() and pads:
                 best = pads[0]
                 if len(pads) > 1:
@@ -8096,10 +8644,31 @@ class App(tk.Tk):
                     best = min(pads, key=lambda p: (
                         (p["pos"][0] - mx) ** 2 + (p["pos"][2] - mz) ** 2))
                 x, y, z = best["pos"]
+                bw = bh = 4
+                # Prefer exact voxel footprint for pad surface at this Y
+                if terrain_chunks and terrain_origin:
+                    ty = int(terrain_y.get())
+                    for cid, cells in terrain_chunks.items():
+                        orig = terrain_origin.get(cid)
+                        if not orig:
+                            continue
+                        ox, oz = orig
+                        pcells = [
+                            (lx, lz) for lx, ly, lz, b in cells
+                            if b == 251 and ly == ty
+                        ]
+                        if len(pcells) >= 8:
+                            xs = [ox + lx + 0.5 for lx, lz in pcells]
+                            zs = [oz + lz + 0.5 for lx, lz in pcells]
+                            x = (min(xs) + max(xs)) / 2.0
+                            z = (min(zs) + max(zs)) / 2.0
+                            bw = max(xs) - min(xs) + 1.0
+                            bh = max(zs) - min(zs) + 1.0
+                            break
                 add_footprint(
-                    x, z, 4, 4, "#222222", "pad",
-                    "Landing pad  4×4  (%.1f, %.1f, %.1f)%s"
-                    % (x, y, z,
+                    x, z, bw, bh, "#222222", "pad",
+                    "Landing pad  %.0f×%.0f  (%.1f, %.1f, %.1f)%s"
+                    % (bw, bh, x, y, z,
                        ("  [%d components, showing 1]" % len(pads)
                         if len(pads) > 1 else "")),
                     best, outline="#eeeeee")
