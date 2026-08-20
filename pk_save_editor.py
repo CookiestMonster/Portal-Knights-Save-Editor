@@ -2246,6 +2246,19 @@ def voxel_xyz_index(x, y, z):
     return i
 
 
+def chunk_id_to_grid(cid):
+    """Map BKCK chunk id → (gx, gz). World origin = (gx * 32, gz * 32).
+
+    Bit fields of the id (not cid%8 / cid//8). Verified on All Hallow's Land:
+    sparse ids pack into a continuous 4×4 disc.
+    """
+    ci = int(cid)
+    gx = (ci & 1) | (((ci >> 3) & 1) << 1)
+    gz = ((ci >> 2) & 1) | (((ci >> 5) & 1) << 1)
+    return gx, gz
+
+
+
 KNOWN_VOXEL_BLOCKS = {
     0: "air",
     1: "dirt",
@@ -8192,11 +8205,8 @@ class App(tk.Tk):
                 if cells:
                     terrain_chunks[cid] = cells
 
-        # Chunk id → world XZ: 8×8 grid of 32³ Morton chunks (ids 0..63).
-        # (Linear "id * 32 on X" was wrong and stretched islands into a strip.)
-        # world_x = (cid % 8) * 32 + local_x
-        # world_z = (cid // 8) * 32 + local_z
-        terrain_origin = {}  # chunk_id -> (ox, oz)  world = origin + local
+        # Chunk id → world XZ via bit-field grid (not cid%8).
+        terrain_origin = {}  # chunk_id -> (ox, oz)
         pad_world = None
         if pads and pads[0].get("pos"):
             pad_world = pads[0]["pos"]
@@ -8206,11 +8216,10 @@ class App(tk.Tk):
             except (TypeError, ValueError):
                 continue
             if 0 <= ci < 64:
-                gx, gz = ci % 8, ci // 8
-                terrain_origin[cid] = (float(gx * 32), float(gz * 32))
-            elif len(terrain_chunks) <= 4 and pad_world is not None:
-                # Tiny creative-style file: fall back to pad-centred single chunk
-                cells = terrain_chunks[cid]
+                gx, gz = chunk_id_to_grid(ci)
+                terrain_origin[ci] = (float(gx * 32), float(gz * 32))
+        if not terrain_origin and len(terrain_chunks) <= 4 and pad_world is not None:
+            for cid, cells in terrain_chunks.items():
                 pad_cells = [(x, z) for x, y, z, b in cells if b == 251]
                 if len(pad_cells) >= 4:
                     cx = sum(px + 0.5 for px, pz in pad_cells) / len(pad_cells)
@@ -8218,11 +8227,59 @@ class App(tk.Tk):
                     terrain_origin[cid] = (
                         pad_world[0] - cx, pad_world[2] - cz)
 
+        # Snap grid so landing-pad voxels line up with pad entity (game coords)
+        if pad_world is not None and terrain_origin:
+            pad_vox = []  # world xz of 251 cells in current grid
+            for cid, cells in terrain_chunks.items():
+                orig = terrain_origin.get(cid)
+                if orig is None:
+                    try:
+                        orig = terrain_origin.get(int(cid))
+                    except (TypeError, ValueError):
+                        continue
+                if not orig:
+                    continue
+                ox, oz = orig
+                for lx, ly, lz, b in cells:
+                    if b == 251:
+                        pad_vox.append((ox + lx + 0.5, oz + lz + 0.5))
+            if len(pad_vox) >= 4:
+                vx = sum(p[0] for p in pad_vox) / len(pad_vox)
+                vz = sum(p[1] for p in pad_vox) / len(pad_vox)
+                dx = pad_world[0] - vx
+                dz = pad_world[2] - vz
+                for cid in list(terrain_origin.keys()):
+                    ox, oz = terrain_origin[cid]
+                    terrain_origin[cid] = (ox + dx, oz + dz)
+
+        # Heightmap: topmost non-air per world column (for surface mode)
+        terrain_heightmap = {}  # (ix, iz) -> (top_y, block_id)
+        for cid, cells in terrain_chunks.items():
+            orig = terrain_origin.get(cid)
+            if orig is None:
+                try:
+                    orig = terrain_origin.get(int(cid))
+                except (TypeError, ValueError):
+                    orig = None
+            if not orig:
+                continue
+            ox, oz = orig
+            for lx, ly, lz, b in cells:
+                if b == 0:
+                    continue
+                key = (int(round(ox + lx)), int(round(oz + lz)))
+                prev = terrain_heightmap.get(key)
+                if prev is None or ly > prev[0]:
+                    terrain_heightmap[key] = (ly, b)
+
         pts = []
         for group in (chests, signs, npcs, pads, others):
             for it in group:
                 x, _y, z = it["pos"]
                 pts.append((x, z))
+        for (ix, iz) in terrain_heightmap:
+            if 0 <= ix <= 320 and 0 <= iz <= 320:
+                pts.append((ix, iz))
         # Terrain extents only if they stay on a sane island (0..320)
         for cid, cells in terrain_chunks.items():
             orig = terrain_origin.get(cid)
@@ -8465,10 +8522,10 @@ class App(tk.Tk):
                 })
                 return iid
 
-            # Terrain voxels under markers (Morton local → world via pad anchor)
-            if show_terrain.get() and terrain_chunks:
+            # Terrain: Surface = heightmap silhouette; moving chunkY uses a Y-slice.
+            if show_terrain.get() and (terrain_heightmap or terrain_chunks):
                 ty = int(terrain_y.get())
-                def _terrain_color(val):
+                def _col(val):
                     known = {
                         1: "#8B5A2B", 2: "#6B3F1A", 7: "#4A3728",
                         8: "#C4A574", 10: "#2F2F2F", 13: "#8A8A8A",
@@ -8479,32 +8536,55 @@ class App(tk.Tk):
                     }
                     if val in known:
                         return known[val]
-                    h = (val * 37) & 0xFF
+                    hv = (val * 37) & 0xFF
                     return "#%02x%02x%02x" % (
-                        40 + (h % 180), 40 + ((h * 3) % 180),
-                        40 + ((h * 7) % 180))
-                # Draw non-pad first, then pad surface so 4x4 sits on top of dirt
-                def _draw_cells(pred):
-                    for cid, cells in terrain_chunks.items():
-                        orig = terrain_origin.get(cid)
-                        if not orig:
+                        40 + hv % 180, 40 + (hv * 3) % 180,
+                        40 + (hv * 7) % 180)
+                # Prefer exact slice at chunkY when any voxels exist at that Y
+                slice_cells = {}  # (ix,iz)->b
+                for cid, cells in terrain_chunks.items():
+                    orig = terrain_origin.get(cid)
+                    if orig is None:
+                        try:
+                            orig = terrain_origin.get(int(cid))
+                        except (TypeError, ValueError):
                             continue
-                        ox, oz = orig
-                        for lx, ly, lz, b in cells:
-                            if ly != ty or not pred(b):
-                                continue
-                            wx = ox + lx + 0.5
-                            wz = oz + lz + 0.5
-                            cx, cy = world_to_canvas(wx, wz)
-                            hs = max(unit_x * 0.5, 1.5)
-                            vs = max(unit_z * 0.5, 1.5)
-                            canvas.create_rectangle(
-                                cx - hs, cy - vs, cx + hs, cy + vs,
-                                fill=_terrain_color(b), outline="",
-                                tags=("terrain",))
-                _draw_cells(lambda b: b not in (244, 251, 252))
-                _draw_cells(lambda b: b in (244, 252))  # pad detail / extras
-                _draw_cells(lambda b: b == 251)  # pad surface on top
+                    if not orig:
+                        continue
+                    ox, oz = orig
+                    for lx, ly, lz, b in cells:
+                        if ly != ty or b == 0:
+                            continue
+                        key = (int(round(ox + lx)), int(round(oz + lz)))
+                        prev = slice_cells.get(key)
+                        if prev is None or b in (244, 251, 252):
+                            slice_cells[key] = b
+                # Fall back to heightmap if this Y is empty
+                if slice_cells:
+                    solids = {k: (ty, b) for k, b in slice_cells.items()}
+                else:
+                    solids = terrain_heightmap
+                n_sol = len(solids)
+                step = 1
+                if n_sol > 6000:
+                    step = 2
+                if n_sol > 20000:
+                    step = 4
+                if n_sol > 60000:
+                    step = 8
+                drawn = 0
+                hs = max(unit_x * 0.5 * step, 1.0)
+                vs = max(unit_z * 0.5 * step, 1.0)
+                for (ix, iz), (yy, b) in solids.items():
+                    if step > 1 and ((ix % step) or (iz % step)):
+                        continue
+                    cx, cy = world_to_canvas(ix + 0.5, iz + 0.5)
+                    canvas.create_rectangle(
+                        cx - hs, cy - vs, cx + hs, cy + vs,
+                        fill=_col(b), outline="", tags=("terrain",))
+                    drawn += 1
+                    if drawn >= 8000:
+                        break
 
             # Footprints: draw props first, NPCs/pads last so they stay on top.
             inv_fp = {
@@ -8624,7 +8704,7 @@ class App(tk.Tk):
                            x, y, z),
                         n, oval=True, outline="#ffffff")
 
-            # 5) Landing pad — align marker to voxel 251 bounds when known
+            # 5) Landing pad — entity centre, fixed 4×4 footprint
             if show_pads.get() and pads:
                 best = pads[0]
                 if len(pads) > 1:
@@ -8633,31 +8713,10 @@ class App(tk.Tk):
                     best = min(pads, key=lambda p: (
                         (p["pos"][0] - mx) ** 2 + (p["pos"][2] - mz) ** 2))
                 x, y, z = best["pos"]
-                bw = bh = 4
-                # Prefer exact voxel footprint for pad surface at this Y
-                if terrain_chunks and terrain_origin:
-                    ty = int(terrain_y.get())
-                    for cid, cells in terrain_chunks.items():
-                        orig = terrain_origin.get(cid)
-                        if not orig:
-                            continue
-                        ox, oz = orig
-                        pcells = [
-                            (lx, lz) for lx, ly, lz, b in cells
-                            if b == 251 and ly == ty
-                        ]
-                        if len(pcells) >= 8:
-                            xs = [ox + lx + 0.5 for lx, lz in pcells]
-                            zs = [oz + lz + 0.5 for lx, lz in pcells]
-                            x = (min(xs) + max(xs)) / 2.0
-                            z = (min(zs) + max(zs)) / 2.0
-                            bw = max(xs) - min(xs) + 1.0
-                            bh = max(zs) - min(zs) + 1.0
-                            break
                 add_footprint(
-                    x, z, bw, bh, "#222222", "pad",
-                    "Landing pad  %.0f×%.0f  (%.1f, %.1f, %.1f)%s"
-                    % (bw, bh, x, y, z,
+                    x, z, 4, 4, "#222222", "pad",
+                    "Landing pad  4×4  (%.1f, %.1f, %.1f)%s"
+                    % (x, y, z,
                        ("  [%d components, showing 1]" % len(pads)
                         if len(pads) > 1 else "")),
                     best, outline="#eeeeee")
