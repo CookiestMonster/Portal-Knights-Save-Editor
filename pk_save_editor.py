@@ -8192,60 +8192,49 @@ class App(tk.Tk):
                 if cells:
                     terrain_chunks[cid] = cells
 
-        # Anchor: map local → world using landing-pad surface (251) when present
-        terrain_origin = {}  # chunk_id -> (ox, oz) such that world = origin + local
+        # Chunk id → world XZ: 8×8 grid of 32³ Morton chunks (ids 0..63).
+        # (Linear "id * 32 on X" was wrong and stretched islands into a strip.)
+        # world_x = (cid % 8) * 32 + local_x
+        # world_z = (cid // 8) * 32 + local_z
+        terrain_origin = {}  # chunk_id -> (ox, oz)  world = origin + local
         pad_world = None
         if pads and pads[0].get("pos"):
-            pad_world = pads[0]["pos"]  # x,y,z
-        pad_cid = None
-        pad_local_c = None
-        for cid, cells in terrain_chunks.items():
-            # Surface only (251), y matching pad entity height when possible
-            pad_y = None
-            if pad_world is not None:
-                try:
-                    pad_y = int(round(pad_world[1]))
-                except Exception:
-                    pad_y = None
-            pad_cells = [
-                (x, z) for x, y, z, b in cells
-                if b == 251 and (pad_y is None or y == pad_y)
-            ]
-            if len(pad_cells) < 8:
+            pad_world = pads[0]["pos"]
+        for cid in terrain_chunks:
+            try:
+                ci = int(cid)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= ci < 64:
+                gx, gz = ci % 8, ci // 8
+                terrain_origin[cid] = (float(gx * 32), float(gz * 32))
+            elif len(terrain_chunks) <= 4 and pad_world is not None:
+                # Tiny creative-style file: fall back to pad-centred single chunk
+                cells = terrain_chunks[cid]
                 pad_cells = [(x, z) for x, y, z, b in cells if b == 251]
-            if len(pad_cells) >= 8 and pad_world is not None:
-                # Block centers are at local+0.5; entity sits on pad center
-                cx = sum(p[0] + 0.5 for p in pad_cells) / len(pad_cells)
-                cz = sum(p[1] + 0.5 for p in pad_cells) / len(pad_cells)
-                ox = pad_world[0] - cx
-                oz = pad_world[2] - cz
-                terrain_origin[cid] = (ox, oz)
-                pad_cid = cid
-                pad_local_c = (cx, cz)
-                break
-        # Neighbor chunks: assume 32-block tiling; try X-adjacency by chunk id
-        if pad_cid is not None and pad_cid in terrain_origin:
-            base = terrain_origin[pad_cid]
-            for cid in terrain_chunks:
-                if cid in terrain_origin:
-                    continue
-                # Prefer X step for consecutive ids (common strip layout)
-                dx = (int(cid) - int(pad_cid)) * 32
-                terrain_origin[cid] = (base[0] + dx, base[1])
+                if len(pad_cells) >= 4:
+                    cx = sum(px + 0.5 for px, pz in pad_cells) / len(pad_cells)
+                    cz = sum(pz + 0.5 for px, pz in pad_cells) / len(pad_cells)
+                    terrain_origin[cid] = (
+                        pad_world[0] - cx, pad_world[2] - cz)
 
         pts = []
         for group in (chests, signs, npcs, pads, others):
             for it in group:
                 x, _y, z = it["pos"]
                 pts.append((x, z))
-        # include terrain extents so map zooms to blocks too
+        # Terrain extents only if they stay on a sane island (0..320)
         for cid, cells in terrain_chunks.items():
             orig = terrain_origin.get(cid)
             if not orig:
                 continue
             ox, oz = orig
+            if not ( -32 <= ox <= 288 and -32 <= oz <= 288):
+                continue
             for lx, ly, lz, b in cells:
-                pts.append((ox + lx, oz + lz))
+                wx, wz = ox + lx, oz + lz
+                if 0 <= wx <= 320 and 0 <= wz <= 320:
+                    pts.append((wx, wz))
         if not pts:
             messagebox.showinfo(
                 "Empty map",
@@ -8334,7 +8323,7 @@ class App(tk.Tk):
         ttk.Checkbutton(
             layers, text="Terrain", variable=show_terrain,
             command=lambda: redraw()).pack(side="left", padx=6)
-        ttk.Label(layers, text="Y").pack(side="left")
+        ttk.Label(layers, text="chunkY").pack(side="left")
         # Default Y = pad height or most common solid y
         _ty_default = 10
         if pad_world is not None:
