@@ -1241,6 +1241,12 @@ CLASS_NAMES = {
     2313804472: "Druid",
 }
 RACE_BY_NAME = {v: k for k, v in RACE_NAMES.items()}
+# effectPackageIndex often tracks race (Human/Furfolk≈4, Elf≈5)
+RACE_EFFECT_PACKAGE = {
+    2958828689: 4,  # Human
+    3491209201: 5,  # Elf
+    2533362399: 4,  # Furfolk (same band as Human in samples)
+}
 CLASS_BY_NAME = {v: k for k, v in CLASS_NAMES.items()}
 
 # Custom saves hosted on the project GitHub (World Files folder).
@@ -4604,11 +4610,12 @@ def find_game_exe():
     return deduped
 
 
-def extract_dict_from_exe(exe_path, dest_path):
-    """Cut the zstd dictionary out of the game exe and save it to dest_path.
+def extract_dict_from_exe(exe_path, dest_path=None):
+    """Cut the zstd dictionary out of the game exe and save it.
 
-    Raises ValueError with a clear reason if the bytes don't look right,
-    rather than silently writing something broken.
+    Writes via a temp file in a known-writable folder (never assumes
+    Desktop exists — OneDrive / missing Desktop caused
+    FileNotFoundError on pk_dict.bin.tmp-PID for some users).
     """
     with open(exe_path, "rb") as fh:
         fh.seek(DICT_OFFSET)
@@ -4624,30 +4631,56 @@ def extract_dict_from_exe(exe_path, dest_path):
             "magic number (37 A4 30 EC) - got %s instead. This exe is "
             "probably a different version than the offset was taken from."
             % (DICT_OFFSET, data[:4].hex()))
-    dest_dir = os.path.dirname(os.path.abspath(dest_path)) or "."
-    try:
-        os.makedirs(dest_dir, exist_ok=True)
-    except OSError:
-        pass
-    if not _dir_is_writable(dest_dir):
-        dest_path = os.path.join(user_data_dir(), "pk_dict.bin")
-        dest_dir = os.path.dirname(dest_path)
-        os.makedirs(dest_dir, exist_ok=True)
-    tmp_path = dest_path + ".tmp-%d" % os.getpid()
-    try:
-        with open(tmp_path, "wb") as fh:
-            fh.write(data)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp_path, dest_path)
-    except Exception:
+
+    # Prefer explicit dest, then program dir, then AppData / temp
+    candidates = []
+    if dest_path:
+        candidates.append(dest_path)
+    candidates.append(default_dict_path())
+    candidates.append(os.path.join(user_data_dir(), "pk_dict.bin"))
+    candidates.append(os.path.join(
+        __import__("tempfile").gettempdir(),
+        "PortalKnightsSaveEditor", "pk_dict.bin"))
+
+    last_err = None
+    for dest in candidates:
+        dest = os.path.abspath(dest)
+        dest_dir = os.path.dirname(dest) or "."
         try:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except OSError:
-            pass
-        raise
-    return dest_path
+            os.makedirs(dest_dir, exist_ok=True)
+        except OSError as ex:
+            last_err = ex
+            continue
+        if not _dir_is_writable(dest_dir):
+            continue
+        # Write temp in same dir when possible; else system temp
+        try:
+            import tempfile
+            fd, tmp_path = tempfile.mkstemp(
+                prefix="pk_dict_", suffix=".bin", dir=dest_dir)
+            try:
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(data)
+                    fh.flush()
+                    try:
+                        os.fsync(fh.fileno())
+                    except OSError:
+                        pass
+                os.replace(tmp_path, dest)
+            except Exception:
+                try:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                except OSError:
+                    pass
+                raise
+            return dest
+        except Exception as ex:
+            last_err = ex
+            continue
+    raise OSError(
+        "Could not write pk_dict.bin to any writable location. "
+        "Last error: %s" % last_err)
 
 
 # ----------------------------------------------------------------------
@@ -4897,14 +4930,14 @@ class App(tk.Tk):
 
         list_frame = ttk.Frame(self.tab_chars)
         list_frame.pack(side="top", fill="both", expand=True, padx=6, pady=6)
-        columns = ("slot", "name", "index", "size", "modified")
+        columns = ("slot", "class", "name", "index", "size", "modified")
         # height=11 shows all 10 slots + header without a giant empty box
         self.tree = ttk.Treeview(list_frame, columns=columns,
                                   show="headings", selectmode="browse",
                                   height=11)
-        heads = {"slot": "Slot", "name": "Name", "index": "Entry",
-                 "size": "Size", "modified": "Modified"}
-        for col, w in zip(columns, (50, 240, 50, 80, 140)):
+        heads = {"slot": "Slot", "class": "Class", "name": "Name",
+                 "index": "Entry", "size": "Size", "modified": "Modified"}
+        for col, w in zip(columns, (50, 80, 200, 50, 80, 140)):
             self.tree.heading(col, text=heads[col])
             self.tree.column(col, width=w, anchor="w")
         vsb = ttk.Scrollbar(list_frame, orient="vertical",
@@ -9965,9 +9998,15 @@ class App(tk.Tk):
                             break
                 except Exception:
                     pass
+            cls_name = ""
+            if doc:
+                try:
+                    cls_name = character_class_name(bson_parse(doc)[0]) or ""
+                except Exception:
+                    cls_name = ""
             row = self.tree.insert(
                 "", "end",
-                values=("" if slot is None else slot, text,
+                values=("" if slot is None else slot, cls_name, text,
                         e["index"], e["size"], mod_s))
             if off is not None:
                 self.entries_by_row[row] = (e, doc, kind, off, length)
@@ -11939,6 +11978,9 @@ class CharacterEditor(tk.Toplevel):
                     name_field = ch
                     break
 
+        info = ttk.LabelFrame(outer, text="Character")
+        info.pack(fill="x", padx=8, pady=4)
+
         def apply_node(node, label, raw_value, coerce_fn=None):
             if node is None:
                 messagebox.showerror("Missing", "%s not on this character."
@@ -11988,73 +12030,111 @@ class CharacterEditor(tk.Toplevel):
                               values=list(by_name.keys()), state="readonly")
             cb.pack(side="left")
 
-            def apply():
-                name = var.get()
-                if name not in by_name:
-                    messagebox.showerror("Unknown", "Pick a listed %s."
-                                         % label, parent=self)
+            def apply_combo(lab=label, n=node, v=var, bn=by_name):
+                name = (v.get() or "").strip()
+                if name not in bn:
+                    messagebox.showerror(
+                        "Unknown", "Pick a value from the list.", parent=self)
                     return
-                apply_node(node, label, str(by_name[name]))
+                crc = bn[name] & 0xFFFFFFFF
+                if lab == "Race":
+                    self._apply_race_change(n, crc, name)
+                else:
+                    apply_node(n, lab, str(crc))
 
-            ttk.Button(row, text="Apply", command=apply).pack(
+
+            ttk.Button(row, text="Apply", command=apply_combo).pack(
                 side="left", padx=6)
+            return var
 
         def add_gender_row(frame, node):
             row = ttk.Frame(frame)
             row.pack(fill="x", padx=6, pady=2)
             ttk.Label(row, text="Gender:", width=18).pack(side="left")
-            cur = "Male"
+            cur = ""
             if node is not None:
-                cur = GENDER_NAMES.get(int(node["value"]), "Male")
+                cur = GENDER_NAMES.get(int(node["value"]), str(node["value"]))
             var = tk.StringVar(value=cur)
-            cb = ttk.Combobox(row, textvariable=var, width=16,
-                              values=["Male", "Female"], state="readonly")
+            cb = ttk.Combobox(
+                row, textvariable=var, width=16,
+                values=list(GENDER_BY_NAME.keys()), state="readonly")
             cb.pack(side="left")
 
-            def apply():
-                apply_node(node, "Gender", str(GENDER_BY_NAME[var.get()]))
+            def apply_gender():
+                name = (var.get() or "").strip()
+                if name not in GENDER_BY_NAME:
+                    messagebox.showerror(
+                        "Unknown", "Pick Male or Female.", parent=self)
+                    return
+                apply_node(node, "Gender", str(GENDER_BY_NAME[name]))
 
-            ttk.Button(row, text="Apply", command=apply).pack(
+            ttk.Button(row, text="Apply", command=apply_gender).pack(
                 side="left", padx=6)
-            ttk.Label(row, text="(may be driven by model; visual can ignore)",
-                      foreground="#666").pack(side="left", padx=4)
 
-        # ---- Character identity ----
-        info = ttk.LabelFrame(outer, text="Character")
-        info.pack(fill="x", padx=8, pady=(8, 4))
+        def add_currency_row(frame, label, node, max_value=None):
+            row = ttk.Frame(frame)
+            row.pack(fill="x", padx=6, pady=2)
+            ttk.Label(row, text=label + ":", width=18).pack(side="left")
+            var = tk.StringVar(
+                value="" if node is None else str(node["value"]))
+            ttk.Entry(row, textvariable=var, width=14).pack(side="left")
+            ttk.Button(
+                row, text="Apply",
+                command=lambda: apply_node(node, label, var.get()),
+            ).pack(side="left", padx=6)
+            if max_value is not None:
+                def set_max(v=var, mv=max_value, n=node, lab=label):
+                    v.set(str(mv))
+                    apply_node(n, lab, str(mv))
+                ttk.Button(row, text="Max", command=set_max).pack(
+                    side="left", padx=2)
+            return var
 
         # Name
         nrow = ttk.Frame(info)
         nrow.pack(fill="x", padx=6, pady=2)
         ttk.Label(nrow, text="Name:", width=18).pack(side="left")
         name_var = tk.StringVar(value=name_text)
-        ttk.Entry(nrow, textvariable=name_var, width=28).pack(side="left")
+        ttk.Entry(nrow, textvariable=name_var, width=24).pack(side="left")
 
         def apply_name():
-            new = name_var.get().strip()
-            if not new:
-                messagebox.showerror("Empty", "Name cannot be empty.",
-                                     parent=self)
-                return
             if name_field is None:
-                messagebox.showerror("Missing", "No name field found.",
-                                     parent=self)
+                messagebox.showerror(
+                    "Missing", "No name field on this character.", parent=self)
                 return
-            # Prefer the dedicated rename path (pads/truncates the binary).
-            fields = find_name_fields(self.doc)
-            if not fields:
-                messagebox.showerror("Missing", "Could not locate name "
-                                     "bytes in the document.", parent=self)
+            new = (name_var.get() or "").strip()
+            if not new:
+                messagebox.showerror("Empty", "Name cannot be empty.", parent=self)
                 return
-            off, length, _old = fields[0]
-            if not messagebox.askyesno(
-                    "Rename", "Set name to %r?" % new, parent=self):
+            raw = bytes(name_field["value"])
+            # Keep fixed buffer length; pad with zeros
+            encoded = new.encode("utf-8") + b"\x00"
+            if len(encoded) > len(raw):
+                messagebox.showerror(
+                    "Too long",
+                    "Name must fit in %d bytes (including null)." % len(raw),
+                    parent=self)
                 return
+            padded = encoded + b"\x00" * (len(raw) - len(encoded))
             try:
-                target_id = self.e["id"]
                 buf = bytearray(self.doc)
-                set_name(buf, off, length, new)
+                # binary subtype layout: length already in node; patch value bytes
+                vstart = name_field["vstart"]
+                # value is length(4)+subtype(1)+payload — payload starts vstart+5
+                payload_off = vstart + 5
+                old_len = name_field["vend"] - payload_off
+                if len(padded) != old_len:
+                    # fixed-size binary: pad/truncate to old_len
+                    if len(padded) < old_len:
+                        padded = padded + b"\x00" * (old_len - len(padded))
+                    else:
+                        padded = padded[:old_len]
+                buf[payload_off:payload_off + old_len] = padded
+                fresh_nodes, total = bson_parse(buf)
+                if total != len(buf):
+                    raise ValueError("length mismatch after rename")
                 payload = wrap(bytes(buf), self.kind, self.app.cctx)
+                target_id = self.e["id"]
 
                 def verify_fn(check):
                     for ee, ddoc, kkind, eerr in iter_docs(
@@ -12070,8 +12150,8 @@ class CharacterEditor(tk.Toplevel):
                     target_id, payload, verify_fn=verify_fn,
                     verify_label="rename")
                 if ok:
-                    self.app.log("Renamed character to %r. Verified: "
-                                 "CRCs valid, new name reads back." % new)
+                    self.app.log(
+                        "Renamed character to %r. Verified." % new)
                     self.reload()
             except Exception as ex:
                 messagebox.showerror("Rename failed", str(ex), parent=self)
@@ -12082,11 +12162,11 @@ class CharacterEditor(tk.Toplevel):
         add_combo_row(info, "Race", race_node, RACE_NAMES, RACE_BY_NAME)
         add_combo_row(info, "Class", class_node, CLASS_NAMES, CLASS_BY_NAME)
         add_entry_row(info, "Level", level_node)
-        add_entry_row(info, "Coins", coins_node)
-        add_entry_row(info, "Defender Coins", ac_node)
+        add_currency_row(info, "Coins", coins_node, max_value=4294967295)
+        add_currency_row(info, "Defender Coins", ac_node, max_value=4294967295)
         add_gender_row(info, gender_node)
 
-        # Playtime as days / hours / minutes / seconds (stored as uint32 seconds)
+# Playtime as days / hours / minutes / seconds (stored as uint32 seconds)
         pt_row = ttk.Frame(info)
         pt_row.pack(fill="x", padx=6, pady=2)
         ttk.Label(pt_row, text="Playtime:", width=18).pack(side="left")
@@ -12332,6 +12412,153 @@ class CharacterEditor(tk.Toplevel):
                 anchor="w", padx=6)
 
     # -- Backpack / Hotbar ---------------------------------------------
+
+
+    def _apply_race_change(self, race_node, new_crc, race_name):
+        """Change raceCRC and best-effort appearance fields.
+
+        Only rewriting raceCRC leaves Elf modelIds/textureIds on a Human
+        (and vice versa), which is what "corrupts" the character in-game.
+        We also set effectPackageIndex when known, and copy model/texture/
+        color binaries from another character in this file with the same
+        class + gender + target race when one exists.
+        """
+        if race_node is None:
+            messagebox.showerror("Missing", "No raceCRC field.", parent=self)
+            return
+        if not self._ensure_char_write_target():
+            return
+        new_crc = int(new_crc) & 0xFFFFFFFF
+        old_crc = int(race_node.get("value") or 0) & 0xFFFFFFFF
+        if old_crc == new_crc:
+            messagebox.showinfo("Race", "Already %s." % race_name, parent=self)
+            return
+
+        # Locate customization siblings
+        custom = None
+        for n in _walk(self.nodes):
+            if n is race_node:
+                continue
+        # walk parent: race_node path ends with customization
+        path = race_node.get("path")
+        # find customization node containing this raceCRC
+        for n in _walk(self.nodes):
+            if n.get("key") != "customization" or not n.get("children"):
+                continue
+            kids = {ch["key"]: ch for ch in n["children"]}
+            if kids.get("raceCRC") is race_node or (
+                    kids.get("raceCRC")
+                    and kids["raceCRC"].get("vstart") == race_node.get("vstart")):
+                custom = n
+                break
+        if custom is None:
+            # fallback: any customization under CharacterSetup
+            for n in _walk(self.nodes):
+                if n.get("key") == "customization" and n.get("children"):
+                    path_s = str(n.get("path") or "")
+                    if "CharacterSetup" in path_s:
+                        custom = n
+                        break
+
+        kids = {}
+        if custom is not None:
+            kids = {ch["key"]: ch for ch in custom["children"]}
+
+        # Current class / gender for matching donor
+        class_crc = None
+        gender = None
+        if kids.get("classCRC") is not None:
+            class_crc = int(kids["classCRC"]["value"]) & 0xFFFFFFFF
+        for n in _walk(self.nodes):
+            if n.get("key") == "gender" and n.get("children") is None:
+                path_s = str(n.get("path") or "")
+                if "CharacterSetup" in path_s:
+                    gender = int(n["value"])
+                    break
+
+        donor = None  # dict of binary fields from another CHAR in this file
+        try:
+            for ee, ddoc, kkind, eerr in iter_docs(
+                    self.app.container, self.app.dctx):
+                if ee["id"] == self.e["id"] or ddoc is None:
+                    continue
+                try:
+                    nnodes, _ = bson_parse(ddoc)
+                except Exception:
+                    continue
+                for n in _walk(nnodes):
+                    if n.get("key") != "customization" or not n.get("children"):
+                        continue
+                    path_s = str(n.get("path") or "")
+                    if "CharacterSetup" not in path_s:
+                        continue
+                    k2 = {ch["key"]: ch for ch in n["children"]}
+                    if "raceCRC" not in k2:
+                        continue
+                    if (int(k2["raceCRC"]["value"]) & 0xFFFFFFFF) != new_crc:
+                        continue
+                    if class_crc is not None and "classCRC" in k2:
+                        if (int(k2["classCRC"]["value"]) & 0xFFFFFFFF) != class_crc:
+                            continue
+                    # gender match optional
+                    donor = k2
+                    break
+                if donor:
+                    break
+        except Exception as ex:
+            self.app.log("Race donor search: %s" % ex)
+
+        edits = [(race_node, new_crc)]
+        notes = ["raceCRC → %s (0x%08X)" % (race_name, new_crc)]
+
+        # effectPackageIndex
+        eff = kids.get("effectPackageIndex")
+        want_eff = RACE_EFFECT_PACKAGE.get(new_crc)
+        if eff is not None and want_eff is not None:
+            edits.append((eff, int(want_eff)))
+            notes.append("effectPackageIndex → %d" % want_eff)
+
+        # Copy appearance binaries from donor when present
+        if donor:
+            for key in ("modelIds", "textureIds", "colorIds"):
+                src_n = donor.get(key)
+                dst_n = kids.get(key)
+                if src_n is None or dst_n is None:
+                    continue
+                if not isinstance(src_n.get("value"), (bytes, bytearray)):
+                    continue
+                if not isinstance(dst_n.get("value"), (bytes, bytearray)):
+                    continue
+                # Only copy when byte lengths match (avoids document-size shift)
+                if len(bytes(src_n["value"])) != len(bytes(dst_n["value"])):
+                    notes.append(
+                        "%s length mismatch (donor %d vs %d) — skipped"
+                        % (key, len(bytes(src_n["value"])),
+                           len(bytes(dst_n["value"]))))
+                    continue
+                edits.append((dst_n, bytes(src_n["value"])))
+                notes.append("copied %s from same class/race character" % key)
+        else:
+            notes.append(
+                "No same class+race donor in this file — only CRC/effect "
+                "updated. Appearance may still look wrong until you "
+                "re-customize in-game.")
+
+        msg = "Change race to %s?\n\n%s" % (race_name, "\n".join(notes))
+        if not messagebox.askyesno("Confirm race change", msg, parent=self):
+            return
+        ok = self.app.commit_bson_edits(
+            self.e, self.doc, self.kind, edits,
+            verify_label="race → %s" % race_name)
+        if ok:
+            self.app.log("Race change: " + "; ".join(notes))
+            self.reload()
+        else:
+            messagebox.showerror(
+                "Race change failed",
+                "Write/verify failed — see log. Restore .bak if needed.",
+                parent=self)
+
 
     def _build_bags_tab(self):
         parent = self._tab_bags
@@ -12722,36 +12949,79 @@ class CharacterEditor(tk.Toplevel):
                 recipe_bin = n
                 break
 
-        cols = ("idx", "name", "category")
+        cols = ("idx", "id", "name", "category")
         tree = ttk.Treeview(parent, columns=cols, show="headings",
                             height=16, selectmode="browse")
         for col, text, w in (("idx", "#", 40),
-                             ("name", "Recipe", 420),
-                             ("category", "Category", 140)):
+                             ("id", "Serial / ID", 110),
+                             ("name", "Recipe", 360),
+                             ("category", "Category", 120)):
             tree.heading(col, text=text)
             tree.column(col, width=w, anchor="w")
         tree.pack(fill="both", expand=True, padx=8, pady=4)
 
+        row_ids = {}  # iid -> "0x........"
+
+        def copy_selected(_evt=None):
+            sel = tree.selection()
+            if not sel:
+                return
+            pieces = []
+            for iid in sel:
+                rid = row_ids.get(iid)
+                if rid:
+                    pieces.append(rid)
+                else:
+                    vals = tree.item(iid, "values")
+                    if vals and len(vals) > 1:
+                        pieces.append(str(vals[1]))
+            if not pieces:
+                return
+            text = "\n".join(pieces)
+            try:
+                self.clipboard_clear()
+                self.clipboard_append(text)
+                self.update_idletasks()
+                self.app.log("Copied recipe id(s): %s" % text.replace("\n", ", "))
+            except Exception as ex:
+                messagebox.showerror("Copy failed", str(ex), parent=self)
+
+        btns = ttk.Frame(parent)
+        btns.pack(fill="x", padx=8, pady=(0, 6))
+        ttk.Button(btns, text="Copy ID", command=copy_selected).pack(
+            side="left")
+        ttk.Label(
+            btns,
+            text="  Select a row · Copy ID or Ctrl+C  ·  IDs are recipe serials "
+                 "(not item-table hashes)",
+            foreground="#555",
+        ).pack(side="left")
+        tree.bind("<Control-c>", copy_selected)
+        tree.bind("<Control-C>", copy_selected)
+
         if recipe_bin is None:
-            tree.insert("", "end", values=("", "(no knownRecipeIds field)",
+            tree.insert("", "end", values=("", "", "(no knownRecipeIds field)",
                                            ""))
             return
 
         ids = parse_recipe_ids(recipe_bin["value"])
         if not ids:
-            tree.insert("", "end", values=("", "(no recipes unlocked)", ""))
+            tree.insert("", "end", values=("", "", "(no recipes unlocked)", ""))
         for i, crc in enumerate(ids):
             crc = int(crc) & 0xFFFFFFFF
             name = recipe_label_for_id(crc)
+            if name.startswith("0x"):
+                display = "(unmapped)"
+            else:
+                # strip trailing hex if recipe_label already included it
+                display = name.split("  (0x")[0]
             rec = item_record_for_crc(crc)
             cat = (rec.get("category") if rec else None) or (
                 "Recipe ID" if crc in RECIPE_ID_NAMES else "")
-            # Show hex so unknown IDs can be reported
-            if name.startswith("0x"):
-                display = name
-            else:
-                display = "%s  (0x%08X)" % (name, crc)
-            tree.insert("", "end", values=(i + 1, display, cat))
+            hex_id = "0x%08X" % crc
+            iid = tree.insert(
+                "", "end", values=(i + 1, hex_id, display, cat))
+            row_ids[iid] = hex_id
 
     def _build_quests_tab(self):
         parent = self._tab_quests
