@@ -1,16 +1,13 @@
 # Portal Knights Save Format & Live Memory Reference
 
-Companion document for `pk_save_editor.py` / `pk_manager.py`. Describes the
+Companion document for `pk_save_editor.py` Describes the
 on-disk save container, filename encoding, compression stack, custom BSON,
 world/character structures, TemplateCRC naming, terrain voxels, editor
 implementation notes — and, in §21, the live-memory (RAM) side of the
 research: enemy stats, the runtime spawn system, and the shared
 attribute-hash table that ties the disk and RAM findings together.
 
-This edition merges three source documents into one: `format.md` (the
-on-disk format reference, §1-20 + Appendices A-C), `PK_FINDINGS.md` (live
-memory editing final findings), and `PK_SPAWN_SYSTEM.md` (enemy spawn
-system, decoded from `readable_strings_v3.txt`). The latter two are
+(enemy spawn system, decoded from `readable_strings_v3.txt`). The latter two are
 combined into the new §21, with cross-references added at the points in
 §11/§14/§18 where the disk-format research had left the same questions open.
 
@@ -36,7 +33,7 @@ Last updated: 2026-08-27
 14. [TemplateCRC, NPCs, signs](#14-templatecrc-npcs-signs)
 15. [Item table](#15-item-table)
 16. [Asset research (core_game)](#16-asset-research-core_game)
-17. [pk_manager write safety](#17-pk_manager-write-safety)
+17. [pk_save_editor write safety](#17-pk_save_editor-write-safety)
 18. [Feature roadmap](#18-feature-roadmap)
 19. [Related files](#19-related-files)
 20. [Warnings](#20-warnings)
@@ -60,7 +57,7 @@ Steam remote file
     → per entry: [optional zstd] → [optional SNPY/snappy] → BSON document(s)
 ```
 
-`pk_save_editor.py` (and earlier `pk_manager.py`) is a single-file GUI that
+`pk_save_editor.py` (and earlier `pk_save_editor.py`) is a single-file GUI that
 discovers these saves, decompresses entries, parses BSON, maps terrain
 voxels, and can patch scalars / inventory / NPCs with backup + CRC
 verification on the main write paths.
@@ -139,7 +136,7 @@ They do not follow local slot semantics; treat carefully.
 ## 4. World location codes
 
 Last 3–5 hex digits of a `04…` file map to island names.
-Sourced from the community spreadsheet and `WORLD_LOCATIONS` in `pk_manager.py`:
+Sourced from my spreadsheet and `WORLD_LOCATIONS` in `pk_save_editor.py`:
 
 https://docs.google.com/spreadsheets/d/1tAr_RdffZ8KrWMcAhmt4W4tay5ArjAxdX5kTEnaxYCk
 
@@ -302,7 +299,7 @@ Used for KSC1 header and data integrity (not TemplateCRC).
   > An earlier revision of this document listed the polynomial as
   > `0xC96C5795D7870F42`. That value is wrong — it does not reproduce the
   > container's CRCs. `0x42F0E1EBA9EA3693` is correct.
-- Table-driven implementation in `pk_manager` (`crc64`).
+- Table-driven implementation in `pk_save_editor` (`crc64`).
 - `Container.verify()` → `(header_ok, data_ok)`.
 - Independently confirmed: this is the same 64-bit filename-hash routine
   documented and test-vectored by the `ndoa/kfc-tools` project for
@@ -336,7 +333,7 @@ Per-entry payload may be:
 ### Snappy
 
 - Framed with magic `SNPY` then raw snappy stream.
-- `pk_manager` embeds a pure-Python snappy codec (no native dependency).
+- `pk_save_editor` embeds a pure-Python snappy codec (no native dependency).
 - Note: some payloads need care around zero-padding when re-wrapping.
 
 ### Re-wrap
@@ -1165,7 +1162,7 @@ Key findings, since the naive approach failed repeatedly:
 
 ---
 
-## 17. pk_manager write safety
+## 17. pk_save_editor write safety
 
 ### Strengths
 
@@ -1246,8 +1243,8 @@ Key findings, since the naive approach failed repeatedly:
 
 | File | Role |
 |------|------|
-| `pk_save_editor.py` | Current GUI editor (single file; supersedes older `pk_manager.py` name in practice) |
-| `pk_manager.py` | Legacy / companion name |
+| `pk_save_editor.py` | Current GUI editor (single file; supersedes older `pk_save_editor.py` name in practice) |
+| `pk_save_editor.py` | Legacy / companion name |
 | `pk_dict.bin` | zstd dictionary — prefer **same folder as the .py**; if Program Files is not writable, use `%LOCALAPPDATA%\PortalKnightsSaveEditor\pk_dict.bin` |
 | `item_table_merged.json` | Item catalog |
 | `pk_templates.json` | NPC / prop name map (user-editable) |
@@ -1882,7 +1879,7 @@ item_table_merged.json          item hash → name (~3163)
 
 ---
 
-## Appendix A — Constants from pk_manager
+## Appendix A — Constants from pk_save_editor
 
 ```text
 STEAM_APPID       = 374040
