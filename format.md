@@ -1,10 +1,20 @@
-# Portal Knights Save Format Reference
+# Portal Knights Save Format & Live Memory Reference
 
-Companion document for `pk_manager.py`. Describes the on-disk save container,
-filename encoding, compression stack, custom BSON, world/character structures,
-TemplateCRC naming, and editor implementation notes.
+Companion document for `pk_save_editor.py` / `pk_manager.py`. Describes the
+on-disk save container, filename encoding, compression stack, custom BSON,
+world/character structures, TemplateCRC naming, terrain voxels, editor
+implementation notes — and, in §21, the live-memory (RAM) side of the
+research: enemy stats, the runtime spawn system, and the shared
+attribute-hash table that ties the disk and RAM findings together.
 
-Last updated: 2026-08-04
+This edition merges three source documents into one: `format.md` (the
+on-disk format reference, §1-20 + Appendices A-C), `PK_FINDINGS.md` (live
+memory editing final findings), and `PK_SPAWN_SYSTEM.md` (enemy spawn
+system, decoded from `readable_strings_v3.txt`). The latter two are
+combined into the new §21, with cross-references added at the points in
+§11/§14/§18 where the disk-format research had left the same questions open.
+
+Last updated: 2026-08-27
 
 ---
 
@@ -21,14 +31,17 @@ Last updated: 2026-08-04
 9. [Character files](#9-character-files)
 10. [Universe files](#10-universe-files)
 11. [World files and entities](#11-world-files-and-entities)
-12. [Inventory classification](#12-inventory-classification)
-13. [TemplateCRC and NPC names](#13-templatecrc-and-npc-names)
-14. [Item table](#14-item-table)
-15. [Asset research (core_game)](#15-asset-research-core_game)
-16. [pk_manager write safety](#16-pk_manager-write-safety)
-17. [Feature roadmap](#17-feature-roadmap)
-18. [Related files](#18-related-files)
-19. [Warnings](#19-warnings)
+12. [Terrain and voxels](#12-terrain-and-voxels)
+13. [Inventory classification](#13-inventory-classification)
+14. [TemplateCRC, NPCs, signs](#14-templatecrc-npcs-signs)
+15. [Item table](#15-item-table)
+16. [Asset research (core_game)](#16-asset-research-core_game)
+17. [pk_manager write safety](#17-pk_manager-write-safety)
+18. [Feature roadmap](#18-feature-roadmap)
+19. [Related files](#19-related-files)
+20. [Warnings](#20-warnings)
+21. [Live memory (RAM): enemies, stats & spawn systems](#21-live-memory-ram-enemies-stats--spawn-systems)
+22. [Offline KFC research: entity defs, furniture catalog, drop tables](#22-offline-kfc-research-entity-defs-furniture-catalog-drop-tables)
 
 ---
 
@@ -47,8 +60,9 @@ Steam remote file
     → per entry: [optional zstd] → [optional SNPY/snappy] → BSON document(s)
 ```
 
-`pk_manager.py` is a single-file GUI that discovers these saves, decompresses
-entries, parses BSON, and can patch scalars / inventory with backup + CRC
+`pk_save_editor.py` (and earlier `pk_manager.py`) is a single-file GUI that
+discovers these saves, decompresses entries, parses BSON, maps terrain
+voxels, and can patch scalars / inventory / NPCs with backup + CRC
 verification on the main write paths.
 
 ---
@@ -270,6 +284,8 @@ out = MAGIC + count + crc64(table) + crc64(blob) + table + blob
 | `BKCK` | Block / entity chunk (world placed entities) |
 | `FLCK` | Fluid or secondary chunk (often numerous) |
 | `PKSS` | Session / misc |
+| `CIPI` | Creative island roster (`CustomIslandPlanetInfo`) |
+| `PTHD` | Planet header (`PlanetHeaderData`, unlock / creative locks) |
 
 Example world (`040000000100040f`): ~1228 entries, mostly `FLCK`, dozens of
 `BKCK`, some `ILAS`.
@@ -577,9 +593,98 @@ characters — always match on the CRC.**
 
 - Tag `USHD` / document type `UniverseHeaderData` holds display naming.
 - Prefer **short UI names** when multiple string candidates exist (e.g. `AIW`).
-- `ILHD` entries list islands: seed, generationVersion, dCRC, etc.
+- `ILHD` entries list islands: seed, generationVersion, dCRC, size, spawn, etc.
 - Loading a universe in the tool should filter **worlds** to that universe id
   and can auto-focus the character file.
+- Runtime log `[pregame] Missing Universe Header` appears when entering
+  universe selection without a usable header binding (often empty/invalid
+  `USHD` or a universe slot the menu cannot resolve). Not yet pinned to one
+  specific missing BSON field.
+
+### Creative vs Adventure (critical)
+
+**`USHD.gameplayMode`** is the authoritative universe-level flag:
+
+| Value | Meaning |
+|-------|---------|
+| `'Creative'` | Creative-only universe. Islands are player blueprints / flat templates. |
+| (other / absent) | Normal adventure progression (story islands, generated terrain). |
+
+Verified on universe `0300000000000000` (slot 0):
+
+```text
+UniverseHeaderData.gameplayMode = 'Creative'
+UniverseHeaderData.universeSize = 'Small'
+UniverseHeaderData.name         = 'Universe 1'
+lastVisitedIsland               = planet 0 / cluster 2 / island 9
+```
+
+#### Why world filenames still say “Addermoor (2-11)”
+
+World files are named `04` + universe(8 hex) + location(4 hex), e.g.
+`0400000000000209`. The trailing `0209` = **cluster 2, island 9**
+(location id 521). The editor’s `WORLD_LOCATIONS` table maps that id to
+the **story** name “Addermoor (2-11)”.
+
+In a **Creative** universe that same slot is **not** the story island. It is
+whatever the player put there (flat / blueprint). The story name from the
+filename alone is **misleading** — always check `USHD.gameplayMode` (and
+`CIPI` below) before trusting location names.
+
+#### `CIPI` — CustomIslandPlanetInfo
+
+Present on Creative universes. Roster of island slots:
+
+| Field | Example | Notes |
+|-------|---------|--------|
+| `islandTemplateId` | `'Homeland'`, `'CreativeB'` | Template class for the slot |
+| `islandName.name` | `'Blueprint'` | Player-visible name (64-byte padded) |
+| `islandThemeCRC` | `3324483980` (`0xC627998C`) | Theme asset CRC (e.g. Terrain / Balanced-style themes) |
+| `islandId` | `9` | Matches the location low bits in the world filename |
+| `islandSize` | `0` | Often 0 in CIPI; real size is in that island’s `ILHD` |
+
+Example (same universe, last-visited slot):
+
+```text
+clusterId=2, islandId=9
+  name             = 'Blueprint'
+  islandTemplateId = 'CreativeB'
+  islandThemeCRC   = 3324483980
+```
+
+Empty / unused slots typically show `islandTemplateId = 'Homeland'` and a
+zeroed name.
+
+#### `ILHD` on Creative islands
+
+Same structure as adventure. Example for location 521 on the Creative
+universe above:
+
+```text
+seed = 1787929990
+islandSize = 128 × 128 × 128
+playerSpawnPosition ≈ (43, 64, 103)   # matches pad on the world file
+```
+
+#### Map / terrain detection (editor)
+
+Do **not** classify Creative vs Story from BKCK chunk-id density alone.
+A heavily edited Creative island can have dense sequential BKCK ids and
+look “Story/Generated” while `gameplayMode` is still `'Creative'`.
+
+Recommended rule for the offline editor:
+
+1. If parent universe `USHD.gameplayMode == 'Creative'` → treat as
+   **Superflat / Creative** → **show BKCK terrain** on the map.
+2. Else if BKCK ids are sparse bit-field → Superflat-like → show terrain.
+3. Else → Story/Generated → hide BKCK terrain by default (seed mesh is
+   not fully stored; BKCK is solid fill / edits only).
+
+#### `PTHD` notes
+
+`PlanetHeaderData.islandClusterStates[].islandStates[]` includes
+`isCreativeModeBlocked` / `isCreativePlayTestModeBlocked` per island
+(adventure locks). Not a substitute for `USHD.gameplayMode`.
 
 ---
 
@@ -587,6 +692,10 @@ characters — always match on the CRC.**
 
 World entities are primarily found by decompressing **`BKCK`** (and related)
 chunks and walking BSON for `TemplateCRC` + transform/position fields.
+
+> Regular enemies are conspicuously absent from this list — see **§21.3**
+> for why: they are generated at runtime by a spawner system and never
+> touch the world file at all.
 
 ### Example decode summary (`040000000100040f`)
 
@@ -629,10 +738,117 @@ and the NPC table in section 13.
 - Sort worlds by **mtime** when listing.
 - NPC stored Z may need **display offset −1** vs in-game (verify per build).
 - Empty “pad-like” entities should not all render as landing pads.
+- Landing pad TemplateCRC is **`0x0BCB9932`** (entity). Guitar Pad F
+  (`0xDF6A6AFD`) is a different prop (trigger/mining-style), not a sign.
+
+### Creative themes / lighting
+
+Primary theme handle for Creative islands is **`CIPI.islandThemeCRC`** on the
+**universe** file (not the world file). Example: `0xC627998C` on a
+“Blueprint” / `CreativeB` slot (user-facing theme often described as
+Terrain / Balanced-style). World-file ILAS may also carry theme-related
+blobs on some islands.
+
+Creative sky moods (Halloween bats, mist, etc.) are **not** reliably stored
+as a simple field in the world file’s BKCK/FLCK. Do not assume tag counts
+(BKCK×16 / FLCK×64) encode theme. Always pair with `USHD.gameplayMode`.
 
 ---
 
-## 12. Inventory classification
+## 12. Terrain and voxels
+
+Player-placed blocks and complex terrain live in **`BKCK` `Chunk.voxelData`**,
+not in FLCK.
+
+### Two terrain encodings
+
+| Encoding | Where | When |
+|----------|--------|------|
+| **columnSet** | FLCK | Simple / flat ground. `columnCount = 1024` (32×32), each column **10 bytes**. Observed fill pattern `00…00 01 00` = solid slab of block id 1. |
+| **voxelData** | BKCK Chunk | Real placed blocks / complex terrain. Exactly **32 768 bytes = 32³** (one byte per voxel). |
+
+Flat Creative islands often have only identical FLCK columns and empty
+voxelData until the player places blocks. Dense story islands (e.g. Fort
+Finch) use voxelData heavily.
+
+### Indexing: Morton (Z-order)
+
+Byte index inside a 32³ chunk is **not** linear `x + 32*y + 1024*z`.
+Confirmed by controlled builds (vertical stack, plus shape, material lines):
+
+```text
+bits interleaved: bit 3k → x,  3k+1 → y,  3k+2 → z
+y = height inside the chunk
+```
+
+Linear guesses produce “empty bands” and scrambled lines; Morton recovers
+straight pillars and a clean 4×4 landing-pad surface.
+
+### Chunk grid → world
+
+For normal islands with chunk ids 0–63:
+
+```text
+world_x ≈ (chunk_id % 8) * 32 + local_x
+world_z ≈ (chunk_id // 8) * 32 + local_z
+```
+
+→ ~256×256 island from an 8×8 of 32³ chunks.
+
+**Editor note (2026-08-28):** chunk-id → grid is **mode-dependent**:
+
+| BKCK id set | Grid | Local X/Z |
+|-------------|------|-----------|
+| Sparse bit-field family (unique cells under bits 0+3 / 2+5) | bit-field 4×4 disc | no axis swap |
+| Dense sequential 0..N | linear `cid%8` / `cid//8` | Morton local axes swapped onto world XZ |
+
+Landing-pad snap (entity pos vs voxel id **251**) still corrects residual
+origin error when a pad is present. **Creative vs Story for map terrain
+visibility** must use `USHD.gameplayMode` when the universe is available
+(see §10) — dense BKCK alone is not proof of story generation.
+
+Anchor: landing-pad entity at known world pos + the 16 surface voxels of
+id **251** in the same chunk lock origin and half-block centering
+(+0.5 for block centers).
+
+### Known voxel block ids
+
+| Id | Name |
+|---:|------|
+| 0 | air |
+| 1 | dirt |
+| 2 | Soil |
+| 7 | Dark Parquet |
+| 8 | Parquet |
+| 10 | Coal Block |
+| 13 | Polished Gray Wood |
+| 14 | Polished Dark Wood |
+| 15 | Polished Wood |
+| 16 | Wood |
+| 18 | Polished Bamboo |
+| 49 | Sand |
+| 50 | Straw |
+| 51 | Snowblock |
+| 244 | pad-detail / glow (not the 4×4 floor) |
+| 251 | **landing-pad surface** (exactly **16** = 4×4×1) |
+| 252 | pad-extra |
+
+Ids are **small integers**, unrelated to item-table `II` hashes. Names locked
+by placing known materials in a line under an NPC and matching index order
+(coal/snow anchors).
+
+### Editor notes
+
+- **Terrain / voxels…** — lists non-air cells by chunk + block id; 2.5D Y-slice
+  (Morton X/Z top-down, Y slider 0–31).
+- **Map…** — optional terrain layer under NPCs/chests; same Y axis; adaptive
+  subsampling for performance.
+- Fully **quit the game** after placing blocks or the file may not flush
+  voxelData (FLCK may stay unchanged).
+
+---
+
+## 13. Inventory classification
 
 `classify_inventory_entity` uses array lengths:
 
@@ -657,11 +873,46 @@ merged item table provides them, and copy **hash hex + decimal**.
 
 ---
 
-## 13. TemplateCRC and NPC names
+## 14. TemplateCRC, NPCs, signs
+
+### Type vs instance
+
+`TemplateCRC` is the **asset type** (blueprint). Many worlds correctly share
+the same CRC for the same NPC or furniture mesh. Collect-by-CRC for a catalog
+island is correct; it is *not* an error that the same hash appears in two
+worlds. Instance data that differs includes position, orientation,
+`SpawnerImpactId`, inventory (`II`/`SI`/`SC`), custom text, age/growTime, etc.
+
+### Collect all worlds → catalog island
+
+- Scan all world files → unique TemplateCRCs that look like NPC Control.
+- Place one of each on a vacant island grid; **never reuse (x,y,z)**.
+- Insert in **batches of ~48** across multiple EntityArrays (emptier first).
+- After write: log `positions=N unique=N` and how many NPC Control entities
+  the file actually contains (planned + pre-existing).
+- Earlier bug: Y hitting island height cap reused XZ cells → only ~64 visible;
+  fixed by unique positions + multi-array insert.
+
+### Signs and custom text
+
+| Prop | TemplateCRC (example) | Notes |
+|------|------------------------|--------|
+| Landing pad | `0x0BCB9932` | 4×4 entity + voxel surface 251 |
+| Sign (User Editable String) | e.g. `0x0E582198` | Has `User Editable String Component` |
+| Guitar Pad F | `0xDF6A6AFD` | Trigger/mining pad — **not** a sign |
+
+- Custom / flushed text lives on the **entity** (string field). Copying the
+  entity can carry that text across worlds.
+- `wasEdited = false` → game still uses **default** text from game data; the
+  readable line is **not** in the save.
+- Opening a sign in-game often sets `wasEdited = true` and copies the default
+  line into the save — so “edited” does not only mean “player typed custom text.”
+- Editor Signs… lists all User Editable String props; shows stored text or
+  “(default game text — not stored in save)”.
 
 ### Naming priority in the tool
 
-1. `NPC_TEMPLATES` hand map (below)
+1. `NPC_TEMPLATES` / `pk_templates.json` hand map
 2. `cracked_templates.json` GUID label (`guid:…`)
 3. Raw `0xXXXXXXXX`
 
@@ -693,6 +944,15 @@ non-hashed **display-name table** (grouped by category, with roughly a
 dozen localized copies) has been found elsewhere in `core_game.kfc_data`
 for items, so an equivalent table is a reasonable next place to look for
 NPC names.
+
+> **Independent confirmation (§21.8):** the live-memory research hit the
+> same wall from a completely different angle — hashing all 617 known
+> *enemy* template asset names (`enemy_slime_base`, etc.) against ~60
+> prefix/suffix variants each produced zero matches against the 7 known
+> enemy TemplateCRCs. Two unrelated approaches (disk GUID-string mining vs.
+> RAM asset-name hashing) landing on the same "the preimage isn't shipped"
+> conclusion is a good sign the conclusion is actually correct, not an
+> artifact of one method.
 
 ### NPC_TEMPLATES (community list)
 
@@ -768,7 +1028,7 @@ at a time; always backup the world file.
 
 ---
 
-## 14. Item table
+## 15. Item table
 
 - The **authoritative** item list lives in the game's own data, not in any
   community file: `server_core.kfc_data`, entry **1230** — 4,112 fixed
@@ -791,7 +1051,7 @@ at a time; always backup the world file.
 
 ---
 
-## 15. Asset research (core_game)
+## 16. Asset research (core_game)
 
 Portal Knights and Enshrouded are both built on Keen Games' **"kfc"**
 engine. This matters directly: the container CRC64 (§6), the archive
@@ -905,7 +1165,7 @@ Key findings, since the naive approach failed repeatedly:
 
 ---
 
-## 16. pk_manager write safety
+## 17. pk_manager write safety
 
 ### Strengths
 
@@ -946,7 +1206,7 @@ Key findings, since the naive approach failed repeatedly:
 
 ---
 
-## 17. Feature roadmap
+## 18. Feature roadmap
 
 ### P0
 
@@ -960,6 +1220,8 @@ Key findings, since the naive approach failed repeatedly:
 - Quest state editing
 - Batch stack/stat edits
 - Landing pad editor (mirror signs)
+- Voxel place/delete (write path for BKCK voxelData)
+- Full chunk-id → world origin grid for all sparse island layouts
 
 ### P2
 
@@ -969,26 +1231,39 @@ Key findings, since the naive approach failed repeatedly:
 - Diff vs backup; persistent edit history
 - Remember paths/geometry; version string; `requirements.txt`
 - Robust Steam root discovery
+- Creative theme / islandThemeCRC dictionary (universe or world)
+- ~~Enemy definition HP/loot (EntitySystem component defs — not in save
+  body)~~ — **answered by §21**: health/damage are computed at spawn time
+  from a scaling formula, not stored anywhere; loot lives in a
+  server-only "Server Loot Drop Component" not reachable from disk. Live
+  values are readable via the toolkit in §21.11, but writing them back
+  is a separate, unstarted problem (they don't persist, so there's
+  nothing on disk to patch).
 
 ---
 
-## 18. Related files
+## 19. Related files
 
 | File | Role |
 |------|------|
-| `pk_manager.py` | GUI editor (single file) |
-| `pk_dict.bin` | zstd dictionary |
+| `pk_save_editor.py` | Current GUI editor (single file; supersedes older `pk_manager.py` name in practice) |
+| `pk_manager.py` | Legacy / companion name |
+| `pk_dict.bin` | zstd dictionary — prefer **same folder as the .py**; if Program Files is not writable, use `%LOCALAPPDATA%\PortalKnightsSaveEditor\pk_dict.bin` |
 | `item_table_merged.json` | Item catalog |
+| `pk_templates.json` | NPC / prop name map (user-editable) |
 | `pk_world_crcs.json` | Auxiliary world/CRC data |
 | `pk_item_crcs.json` | Confirmed hash↔item-name pairings (equip-and-read or chest-labeling) |
 | `pk_all_item_hashes.json` | Complete 4,112-entry item hash list read from `server_core.kfc_data` entry 1230 |
 | `cracked_templates.json` | Optional GUID↔CRC |
 | `unresolved_template_targets.json` | CRC frequency from worlds |
 | `format.md` | This document |
+| `pk_enemy_catalog.json` | 617-template enemy catalog extracted from strings — see §21.5 |
+| `ce_enemy_health.lua` / `ce_av_dump.lua` | Cheat Engine Lua scripts for live enemy/AV scanning — see §21.11 |
+| `pk_live_enemies.py`, `pk_enemy_diff.py`, and the rest of the `pk_enemy_*`/`pk_*` live-memory scripts | Live-memory toolkit — full list in §21.11 |
 
 ---
 
-## 19. Warnings
+## 20. Warnings
 
 1. **Always backup** before writes — especially `0100…` (all characters) and `0300…` (whole universe).
 2. Universe **slot digit** is not remappable by display rename.
@@ -1006,6 +1281,604 @@ Key findings, since the naive approach failed repeatedly:
 9. Type `0x14` is dual-use (§8) — don't treat every field of that type as a
    read-only CRC hash; several (`C`, `AC`, `playtime`, `slotId`, `price`,
    `lastPlayedTime`) are plain writable counters.
+10. Placed blocks live in **BKCK voxelData** (Morton 32³), not FLCK. Fully
+    quit the game after building or the file may not flush.
+11. Same TemplateCRC in two worlds is normal (type hash). Do not “dedupe”
+    furniture instances by CRC alone if you need every physical copy.
+12. Sign/NPC default dialogue is often **not** in the save until opened or
+    edited in-game (`wasEdited`).
+
+---
+
+## 21. Live memory (RAM): enemies, stats & spawn systems
+
+This section merges `PK_FINDINGS.md` and `PK_SPAWN_SYSTEM.md` — a separate
+research thread from §1-20 above. Everything before this point is about
+the **on-disk** save; everything below is about **live process memory**,
+read with `pymem` scans and Cheat Engine (CE) Lua, not the KSC1/BSON path.
+The two threads share one thing directly: the same `crc32(lowercase(
+"Parent.Child"))` attribute-hash convention from §9 is used for entity
+stats in RAM as well as for the character's own `AV` block on disk.
+
+### 21.1 Overview — why a live editor at all
+
+§11 already shows that world files carry essentially no regular enemies.
+That's not a gap in the disk-format research — it's because enemies
+genuinely don't live on disk (see §21.3). A live memory editor is how you
+read or change anything about them at all: **save editor = disk
+(KSC1→zstd→BSON); live tools = RAM (pymem scan + CE Lua)**, sharing the
+same attribute-hash table on both sides. The approach is proven and
+working, not speculative — every figure in §21.2 was read from a real,
+running game session (Squire's Knoll).
+
+### 21.2 Confirmed enemy stats (measured live, Squire's Knoll)
+
+| Visual type | Max HP | Damage | Speed (AV) | Regen | Notes |
+|---|---|---|---|---|---|
+| Green Slime | 60.8 | 16.64 | 1.0 | 0 | common |
+| Venom Maggot | 60.8 | 16.64 | 1.0 (reads 0) | 0 | underground, never moves |
+| Orange Slime | 60.8 | 16.64 | 3.0 | 0 | rarer |
+| Parrot | 76.0 | 20.8 | 3.0 (max 4.0) | 0 | flies |
+| Fallen Soldier (Skeleton) | 152 | 41.6 | 2.0 (max 5.0) | 0 | placed, respawns on world load |
+| Dummy Harrold | 30400 | none | 4.5 (unused) | 0 | two AV blocks (152+30400) |
+| Dummy (builder) | 152 | — | — | 0 | |
+
+Green/Maggot/Orange slimes have **identical** stats — only 3 slime
+templates exist (`enemy_slime_base`/`slimy`/`tackle`); colour is a model
+variant, not a stat variant. The AV block is the shared template.
+`MovementSpeed` in the AV block is a default, not observed behaviour: the
+**Maggot is the speed-0 group** — it lives underground and never moves,
+so its AV speed reads 0 (or the movement code simply never runs for it).
+A kill-diff (§21.11) confirms this: killing a maggot drops the speed-0
+group's count specifically.
+
+### 21.3 Why enemies are never in world files (solved)
+
+Confirmed from two independent angles:
+
+1. **Disk evidence**: `pk_templates.json` lists exactly **7** "enemy"
+   entries, and all 7 are bosses/rift knights (`Hollow King Boss`,
+   `Anub'Kraken`, `Hollow Dark Knight (spawn)`, …). A full scan of the
+   Squire's Knoll world file found 52 templates, **0 spawners, 0
+   enemies** — just props (Wheat Field ×72, vases, lanterns) and voxel
+   dirt ×293,699.
+2. **String evidence**: the game's own strings say so outright —
+   `editor_spawner_event_normal_enemy_unsaved`. The `_unsaved` suffix on
+   several spawner template strings (§21.4) is the game marking most
+   runtime spawners as **not persisted to the world file**, which is
+   exactly why the disk scan in (1) found nothing.
+
+So: **regular enemy info is generated at runtime and lives only in live
+memory** — the same memory a 20,110-string dump (used to build §21.4-21.5)
+was pulled from. Health floats and the strings that explain them were
+sitting in the same process the whole time, just in different tables
+(strings in a static name table, health in per-entity AV blocks, §21.6).
+
+### 21.4 Spawn mechanics: spawners, waves, and health scaling
+
+**Spawner templates** (352 strings found) are placed by the dungeon
+editor at runtime, seeded from the island seed. Sizes encode the spawn
+volume (W×H×D in blocks):
+
+```text
+basic_enemy_spawner_1x2x1   1x3x1   1x4x1   1x5x1   3x2x3   5x4x5
+```
+
+Dungeon/event spawners:
+
+```text
+editor_spawner_dungeon_normal_enemy
+editor_spawner_dungeon_small_enemy_special_02
+editor_spawner_event_normal_enemy        editor_spawner_event_elite_enemy
+editor_spawner_event_normal_enemy_unsaved   <- "unsaved" = NOT persisted!
+editor_spawner_melee_enemy               editor_spawner_ranger_enemy
+spawner_crystal_rift_phantom_small01     spawner_rift_groundtrap_pool
+```
+
+**Wave controllers** drive arena combat via props that *are* stored in
+the world (the controller, not the enemies it spawns):
+
+```text
+prop_wave_control_arena01 .. arena07 (+ _HM hardmode variants)
+wave_controller_arena01 .. arena07
+gWaveConfig  gSubWaveCount  gSubWaveCountMax  gSubWaveDelay
+spawnSubWave  runSubWave  checkWave  configureRandomWave
+Arena_LastWave  sendWaveCompleted  bbIsWaveRunning  bbWaveNumber
+```
+
+So a stored `prop_wave_control_arena01` entity is what *triggers*
+sub-wave enemy spawns; the enemies themselves still never touch disk.
+
+**Health/damage scaling** — enemy health is computed at spawn time, not
+stored, from these string-confirmed knobs:
+
+```text
+enemyHealthScaling_PlayerCountMod
+enemyBossHealthScaling_PlayerCountMod
+enemyArenaHealthScaling_PlayerCountMod
+enemyMiniBossHealthScaling_PlayerCountMod
+enemyArenaHMHealthScaling_PlayerCountMod
+enemyDamageScaling_PlayerCountMod
+SizeScalingMultiplier.HealthScalingMultiplier
+SizeScalingMultiplier.DamageScalingMultiplier
+CRC_EnemyPlayerCountScalingMode_NoScaling
+CRC_EnemyPlayerCountScalingMode_MiniBoss
+CRC_EnemyPlayerCountScalingMode_HardmodeBoss
+getMaxPlayerCount  getPlayerCount  playerCountAttribute
+```
+
+Formula (from the scaling-mode enum + mods):
+
+```text
+final_health = base_health
+             × healthScaling(playerCount)      # per-player-count multiplier
+             × SizeScalingMultiplier           # big = more HP
+             × levelScaling(island level)      # via CharacterLevel attribute
+```
+
+That's why no save ever contains a slime's HP: it depends on how many
+players are in the session at spawn time, which isn't a save-time fact.
+
+### 21.5 Enemy catalog (617 templates, 61 types)
+
+Extracted to `pk_enemy_catalog.json`:
+
+| Type | Count | Examples |
+|------|------:|----------|
+| slime | 52 | `enemy_slime_base`, `enemy_slime_king_add`, `enemy_slime_blackplaque` |
+| skeleton | 49 | `enemy_skeleton_armored`, `enemy_steelskeleton_teleport_convoy_elite` |
+| dragonman | 30 | `enemy_dragonman_caster_convoy_large_filler` |
+| spider | 28 | `enemy_spider_base`, `enemy_spider_crystal01_fire` |
+| turtlesoldier | 28 | `enemy_turtlesoldier_*` |
+| dekuworm | 27 | `enemy_dekuworm_acidspitter_rift_large` |
+| walkingplant | 25 | `enemy_walkingplant_fireblossom_convoy_elite` |
+| monkeypriest | 25 | `enemy_monkeypriest_caribbean_event` |
+| orcsoldier | 21 | `enemy_orcsoldier_flameking_rift_large` |
+| stoneguardian | 21 | `enemy_stoneguardian_*` |
+| hollowknight* | 21 | `enemy_hollowknight11/12/13_*` |
+| boss | 25 | `enemy_boss_01_dragon`, `enemy_boss_02_dekuworm_desert`, `enemy_boss03_hollowking_*` |
+| … | | (61 total types, 617 total templates) |
+
+Suffixes are behaviour modifiers, not separate types: `_convoy` (follows
+a leader), `_filler` (mob filler), `_elite`, `_event`, `_rift`, `_quest`,
+`_HM` (hardmode), `_aggro`, `_large` (size class), `_add` (summoned add).
+
+### 21.6 Live memory layout (decoded)
+
+**Player**
+
+```text
+P+0x0 level, P+0x80 XP, P+0x140 current HP, P+0x144 max HP, P+0x300 mana
+```
+
+**Attribute (AV) block** — every entity with health, same hashing rule as
+the on-disk `AV` block in §9:
+
+```text
+grid stride 0x40: {N at +4 = hash, V at +8 = float}
+  MovementSpeed (Speed, .Base, .Multiplier, .Adder, .Max)
+  Health x6 (current, .Max, .Multiplier, .Adder, .Base, .Regeneration)
+  Damage x4, Outgoing/Incoming_DamageMultiplier, CharacterLevel, Experience
+```
+
+**Entity header** (base = anchor − 0x13C):
+
+```text
+base+0x00 size/scale float; base+0x04 per-instance value;
+base+0x08.. component pointer array (13-15 ptrs: attack/model/schema)
+```
+
+**HP-pair stat structure** (per entity, no hashes — a simpler sibling to
+the full AV grid above):
+
+```text
+HP+0x00 current, HP+0x04 max, HP+0x08 regen, HP+0x0C 1.0, HP+0x10 100.0 (cap)
+HP+0x14 1.0 ... (then pointers/ids as garbage-float reads)
+```
+
+**Template records** (`item_enemy_*` / `enemy_*`):
+
+- name + "Default Attack Name" + u32 family id (slimes: `0x95BA`/`0x366A`)
+- pointers to attack/model/attribute-schema config
+- attribute-schema fields: `Health`, `CharacterLevel`, `Health.Max`,
+  `Health.Regeneration`, …
+
+**Mirrors**: every entity exists **twice** in memory (client + server
+copy). The server copy is a sparse grid (health only); the client copy
+is the full grid. Kill-diffs (§21.11) show 2 addresses vanishing per
+kill, not 1 — the same client/server duplication §13 documents for a
+character's on-disk backpack shows up again here in RAM.
+
+### 21.7 Attribute & combat stat hash reference (merged)
+
+Both research threads independently confirmed the same hashing rule
+(§9): `hash = crc32(lowercase("Parent.Child"))`. Where the two overlap
+the values agree exactly, which is a good independent sanity check on
+both. "✓ both" below means confirmed by the on-disk character-sheet work
+(§9) *and* by live enemy-memory reads (§21); everything else in the
+combat-stat table is live-memory-only so far.
+
+**Character-sheet stat points** (from §9 — six core attribute keys,
+verified against the in-game sheet; these are points *spent*, not the
+sheet total — see §9 for the base-10-plus-spent caveat):
+
+| Hash | Attribute |
+|---|---|
+| `0xA1CCC259` | CON |
+| `0x901AAAEA` | STR (`PlayerIncreasedStrength`) |
+| `0x9B7CAA14` | WIS |
+| `0xEBA0BF47` | INT |
+| `0xAFF73420` | AGI |
+| `0x4D405C66` | DEX |
+| `0xE02CE52F` | unidentified |
+| `0xD033A890` | `CharacterLevel` / level — ✓ both |
+| `0x9CC8A62A` | `RemainingPlayerIncreasedAttributes` (unspent points; absent, not zero, when none remain) |
+| `0xC764ED49` | `Durability` |
+
+**Combat / entity stats** (from live enemy AV blocks, §21.6):
+
+| Hash | Attribute |
+|---|---|
+| `0xCEDA2313` | `Health` — ✓ both |
+| `0x7C323E60` | `Health.Max` — ✓ both |
+| `0x7480B8DE` | `Health.Max.Base` |
+| `0x6401BFE1` | `Health.Max.Adder` — ✓ both |
+| `0x25AB9C28` | `Health.Max.Multiplier` |
+| `0x72566DAA` | `Health.Regeneration` |
+| `0x11C8546C` | `Damage` |
+| `0x1B2F9DF0` | `DamageMelee` |
+| `0x1B0DA612` | `CharacterLevel.Max` |
+| `0x8A2DE1F7` | `MovementSpeed` |
+| `0xBF27FEFC` | `Armor` |
+| `0x55A5FEA8` | `DamageSchoolSusceptibility` |
+| `0x3BB8DD4B` | `DamageNormal` |
+| `0x4D6D1028` | `DamageBlunt` |
+| `0xBD0FA501` | `DamageCutting` |
+| `0x65BAABA5` | `DamageSharp` |
+| `0xE20656E7` | `DamageIce` |
+| `0x81211AC1` | `DamageFire` |
+| `0x240B263C` | `DamageThunder` |
+| `0xE349ACE6` | `DamagePoison` |
+| `0xA53372D0` | `DamageHoly` |
+| `0xF6C50707` | `DamageDaemonic` |
+| `0x5DEFAE8C` | `DamageAstral` |
+| `0xD17982FA` | `DamageCursed` |
+
+### 21.8 TemplateCRC / name problem (see also §14)
+
+`crc32(asset_name)` does **not** match a live entity's `TemplateCRC` —
+tested exhaustively: all 617 enemy template names (§21.5) × ~60
+prefix/suffix combinations against the 7 known enemy CRCs, **zero
+matches**. This independently reaches the same conclusion §14 already
+drew from disk-side GUID mining: the real preimage is a build-time GUID
+string that was never shipped in the retail game.
+
+What *does* work empirically: the in-memory string table holds template
+names and their CRCs **adjacent** to each other. `ce_enemy_health.lua`
+(§21.11) exploits exactly this — find `enemy_slime_base` in memory, dump
+the u32s around it, one of them is its `TemplateCRC`. That builds the
+name↔CRC map one island at a time, the same "spawn on a grid and
+identify manually" workflow §14 already uses for world-entity CRCs.
+
+### 21.9 Positions — the definitive negative
+
+**Positions are not in or near the AV/HP-pair structure.** A full
+±0x100 float dump around a real 60.8-HP entity showed no world
+coordinates — only the HP pair, the 100.0 cap, and pointer/ID garbage.
+Values seen earlier at `+0x64`/`+0x68`/`+0x6C` (12/16/14) turned out to
+be base attributes, not coordinates, on closer inspection.
+
+- Position lives in the **transform component**, behind the entity
+  manager, not inline with the stat block.
+- A CE pointer scan on the HP value found only value-copies (the
+  client/server mirrors from §21.6), no manager path — the entity
+  manager uses indirect/relative linkage, not a simple static pointer
+  chain.
+- The 1,029 transform positions found separately (landing pad, etc.) are
+  **world-placed objects in a static pool** — unrelated to live entity
+  transforms; don't conflate the two.
+- **Conclusion**: per-entity positions need a full entity-manager walk
+  (multi-level pointer chain), realistically via CE Pointer Scan plus
+  manual disassembly — beyond what a scripted single-level scan can do.
+
+### 21.10 Drop tables & XP
+
+- **XP** is directly measurable live: player XP sits at `P+0x80`
+  (§21.6); kill one enemy and the delta is exactly its XP value.
+- **Drop tables are not** in the `item_enemy_*` template records — those
+  pointers resolve to attack/model/schema config only. The actual
+  component is named **Server Loot Drop Component**, and it's
+  server-side, reachable only via the (currently unsolved) entity-manager
+  walk from §21.9 — the same missing piece blocks both problems.
+
+#### Live AV block is not loot
+
+Following a live Green Slime HP address (`pk_loot_follow.py --record`)
+yields **7 heap pointers**, all into the **AV / attribute schema**:
+
+```text
+shared:  Health, Damage, DamageMelee, DamageRanged, DamageSpell,
+         Multiplier, Adder, Base, Max, Regeneration,
+         ExperienceScalingMultiplier, enemy_slime_slimy
+per-instance: value tables for that slime only
+magic 0xCEDA2313 = Health attribute hash (§21.7)
+```
+
+Four simultaneous slimes share the same schema pointers; only value pages
+differ. **No item hashes, no weighted drop rows.**
+
+#### Ground-loot item-CRC scan does not work
+
+Scanning process memory for known drop item CRCs (shards, berries, water,
+Gold Orb Small Dev `0xCCB510B3`, XP globe small `0x60FDF920`) finds
+hundreds of static hits (item table, UI, inventory). Address-set diffs
+after a kill produce noise (e.g. `0x10000019…`), not the visible ground
+crystals. Ground pickups are **not** durable item-hash slots and are
+**not** in the `FFFFFFFF` transform sentinel pool used by static props
+(`pk_transform_scan.py` still matches **0** health anchors to positions).
+
+#### Empirical Green Slime drops (playtest)
+
+```text
+Blue Portal Stone Shard   ×2   (0xA12385DA)
+Water                     ×1   (0xA7528CD9)
+Gold Orb Small (Dev)      ×2   (0xCCB510B3)   — yellow cubes on ground
+XP globe small            ×1   (0x60FDF920)   — item_name_orb_experience_globe_small
+```
+
+Treat enemy drop **lists** as observed-in-game until the entity manager
+is solved. Offline weighted tables in §22 are **dungeon prop/chest
+filler**, not enemy loot.
+
+### 21.11 Toolkit & live workflow
+
+All of the following are working, proven on real saves/sessions — not
+speculative:
+
+| Tool | What it does |
+|---|---|
+| `pk_live_enemies.py` | scan + group entities by health |
+| `pk_enemy_roster.py` | count enemies by stat signature + name (reads JSON) |
+| `pk_enemy_diff.py` | before/after kill diff |
+| `pk_enemy_deepdump_v3.py` | full AV stat block for one entity |
+| `pk_enemy_types.py` | signature classifier + JSON loader |
+| `pk_type_fields.py` | find type-identifying field via header diff |
+| `pk_string_crcs.py` | find name strings + template IDs in memory |
+| `pk_family_scan.py` | scan for family ids / record refs |
+| `pk_loot_follow.py` | follow record pointers, resolve item hashes (AV only on client) |
+| `pk_ground_loot.py` | live item-CRC scan + address-set diff (noisy; not ground entities) |
+| `pk_stat_cache.py` | scan for HP-pair stat structures |
+| `pk_entity_manager.py` | probe for the entity manager |
+| `pk_find_transform.py` | chase component pointers for position |
+| `pk_pos_array.py` | decode the transform position array |
+| `pk_transform_scan.py` | sentinel-based position scan |
+| `pk_transform_chase.py` | chase transform signature |
+| `pk_check_refs.py` | inspect CE pointer-scan results |
+
+Since enemies exist only at runtime, the ground truth has to come from
+CE reading live memory — `pymem` alone can't do it (a 299 permission
+error; CE's own driver can). The repeatable workflow used throughout
+this section:
+
+```text
+STEP 1   ce_enemy_health.lua          (snapshot A)
+         scans for CEDA2313 (Health) + D033A890 (CharacterLevel)
+         → ce_enemies_a.json   (every entity with health + HP + level)
+
+STEP 2   kill ONE enemy
+         ce_enemy_health.lua          (snapshot B)
+         → ce_enemies_b.json
+
+STEP 3   python pk_enemy_diff.py --before ce_enemies_a.json --after ce_enemies_b.json
+         → the address that vanished = YOUR ENEMY
+
+STEP 4   ce_av_dump.lua  (paste that address)
+         → full NAMED stat block of the enemy:
+              Health.Max.Base      = 84.0
+              Health.Max.Multiplier = 1.0
+              CharacterLevel       = 8
+              Armor                = 0.0
+              DamageMelee          = 9.0
+              MovementSpeed        = 1.0
+           (resolved via the hash table in §21.7)
+```
+
+### 21.12 Status: answered vs. still unsolved
+
+**Answered:**
+
+1. A live memory editor works — full toolkit above, proven on real saves.
+2. Enemy stats read live: HP, damage, speed, regen, level, per entity.
+3. Where enemies spawn: runtime seed/theme spawners, never saved,
+   player-count-scaled, respawning placed enemies (soldier/dummies) on
+   world load only.
+4. Why slimes share identical stats: shared template family, colour is
+   a model variant only.
+5. Maggot = the speed-0 underground group, confirmed by kill-diff and
+   behaviour.
+6. AV block layout + hash table decoded, shared with the on-disk save
+   format (§9/§21.7).
+
+**Answered (2026-08-27 offline / live follow-up):**
+
+7. Prop/furniture TemplateCRC → internal `prop_*` names offline
+   (`pk_furniture_catalog.json`, ~808 entries) — §22.
+8. High-frequency world TemplateCRCs mostly named (breakable, chest,
+   mannequin, sunstoneblock, etc.) — §22.2.
+9. One offline **weighted dungeon junk** drop-table format (tag
+   `0x4B2D4FB5`, 72-byte entries) — §22.3; **not** enemy loot.
+10. Live slime record = AV stats only (`enemy_slime_slimy`); confirmed
+    Green Slime drop list by playtest — §21.10.
+
+**Still unsolved** (needs the entity-manager walk / CE Pointer Scan / a
+PDB, per §21.9):
+
+- Per-entity template-id naming for the long tail (workaround: the
+  adjacent-string trick in §21.8, one island at a time).
+- Per-entity positions (transform component, §21.9). Live health anchors
+  and `FFFFFFFF` transform positions remain **decoupled** (0 proximity
+  matches).
+- **Enemy** drop tables as structured data (Server Loot Drop Component).
+  Client AV blocks and item-CRC heap scans do not expose them.
+- Harvestable ore drop tables on disk (may use a different schema than
+  the dungeon weighted pool).
+
+---
+
+## 22. Offline KFC research: entity defs, furniture catalog, drop tables
+
+Work from 2026-08-26/27 on `core_game*.kfc_*` and `server_core*.kfc_*`.
+Complements §16 (archive layout) and §21 (live enemies).
+
+### 22.1 Tools
+
+| Tool | Role |
+|------|------|
+| `kfc0_parse.py` | Parse `KFC0` dir → JSON index (size buckets, offsets) |
+| `kfc0_crc_scan.py` | Extract blobs; search high-frequency TemplateCRCs + nearby strings |
+| `pk_entity_catalog.py` | Bulk scan small blobs for entity defs → `pk_furniture_catalog.json` |
+| `pk_scan_item_hashes.py` | Find item-hash clusters in `server_core.kfc_data` (skip master table) |
+| `pk_parse_drop_tables.py` / one-shot parsers | Decode 2520-byte weighted pools |
+
+Archive sizes of interest:
+
+| Archive | Role |
+|---------|------|
+| `core_game_small.kfc_*` | Many small entity/prop definition blobs |
+| `server_core_small.kfc_*` | Server-side counterparts (similar prop set) |
+| `server_core.kfc_data` | Item master table (~`0x185A20`), dungeon loot pools (~`0x7AF120`), large component schema tables |
+
+### 22.2 Entity definition blobs (props / furniture)
+
+Typical **server** entity-def size ~1500–2500 bytes. Header pattern:
+
+```text
++0x00  0x0000219F     marker (client may swap first two dwords)
++0x04  0x00401103     flags-like
++0x08  TemplateCRC    u32 LE   (often repeated later in the blob)
+…
+ASCII component names + internal asset name (prop_*)
+```
+
+Examples (confirmed by dump):
+
+| TemplateCRC | Internal name | Notes |
+|-------------|---------------|--------|
+| `0x0E8731F4` | `prop_sunstoneblock` | high-freq breakable/harvestable (×520 worlds) |
+| `0xF0653E24` | `prop_signpost_editable` | sign family |
+| `0xD7045302` | `prop_rift_window02_static` | |
+| … | `prop_dungeon_container_01_rangerguild` | container |
+| … | `prop_ranger_trap_*` | traps |
+
+**Catalog output:** `pk_furniture_catalog.json` — **~808 unique TemplateCRCs**
+with `names[]` (`prop_*` / related) and `components[]` stripped of leading
+`<`/`>`. Built from `core_game_small` and `server_core_small` (same count).
+
+Common component strings in defs:
+
+```text
+Impact Component
+Server Loot Drop Component / ServerLootDropSaveData (dCRC, hasDroppedLoot)
+WorldBlockingComponent
+Entity Base Server / Entity Base Client
+EntityConfigComponent
+EntityReplicationStateComponent
+Client User Editable String Component   (signs)
+Static Model Component / Wiggle Component / Occluder Component
+Toggle Component / Trigger Receiver / Trigger Sender
+Simple BT Host
+```
+
+Large **component schema** tables (e.g. server_core entry ~375, ~200 KB)
+repeat the same component type names many times; useful as a dictionary,
+not as per-entity data.
+
+### 22.3 Offline weighted drop tables (dungeon junk only)
+
+**Fingerprint:** tag **`0x4B2D4FB5`** appears **281** times in
+`server_core.kfc_data`, almost all in one run:
+
+```text
+0x7AE990 .. 0x7B3808   (~20 KB, ~280 tags)
+```
+
+**Layout (locked):**
+
+| Field | Value |
+|-------|--------|
+| Entry stride | **72 bytes** |
+| Table size | **2520 bytes** ≈ 35 × 72 (sometimes 2664 / 2712) |
+| Tag | `0x4B2D4FB5` beside most entries |
+| Weights | f32, step ≈ **2.857** (100/35), cumulative toward 100 |
+
+Same 35-item pool is repeated ~18 times (identical item list). Content is
+**dungeon filler**, not enemy loot:
+
+```text
+Minor Healing/Mana Potion, Gray Rat, Torch, Rocket, Water Bomb, Mini Bomb,
+Scroll of Teleportation, Bottle(s), Decorative Box, Books, Scroll Bundle,
+Pottery Bowl/Urn/Pot(s), Small/Big Bundle, Candles, Skull variants
+```
+
+Export: `pk_drop_tables_dungeon.json`.
+
+**Not a global format:** a whole-file search for `0x4B2D4FB5` finds only
+this band. Ore / gear / enemy pools do not use this tag.
+
+Item-hash cluster scans (`pk_scan_item_hashes.py`) also hit the **master
+item table** (~`0x185A30`, 16-byte stride) and shop/recipe slices; always
+filter master runs before treating a cluster as a drop table.
+
+### 22.4 Architecture reminder (disk + RAM)
+
+```text
+Entity Manager (registry)          ← still unsolved (§21.9)
+  └─ entity slot → entity base
+        ├─ Impact / AV component     ← live HP edits work here
+        ├─ Transform component       ← static FFFFFFFF pool ≠ live AV
+        └─ Server Loot Drop          ← enemy drops; not on client AV
+```
+
+Offline KFC gives **type identity** (TemplateCRC → `prop_*`) and one
+**chest/prop** weighted pool. Live gives **stats** and **playtest drops**.
+Linking a specific world entity instance to its drop rows still requires
+the manager.
+
+### 22.5 Enshrouded community (same studio / KFC packing)
+
+Keen Games ships Enshrouded on the **Holistic** engine with the same
+`kfc_dir`/`kfc_data` packaging. Public tooling:
+
+| Project | Notes |
+|---------|--------|
+| [ndoa/kfc-tools](https://github.com/ndoa/kfc-tools) | Extract Enshrouded KFC; hash/GUID blob names |
+| [Ekey/KG.Data.Tool](https://github.com/Ekey/KG.Data.Tool) | Unpack/repack; lists **Portal Knights + Enshrouded** |
+| [Brabb3l/kfc-parser](https://github.com/Brabb3l/kfc-parser) | Descriptors, EXE reflection extract, **Impact** disasm/asm; EML mod loader |
+
+What they **do**: offline unpack → patch descriptor numbers (loot
+multipliers, stacks, auto-loot **templates**) → repack.
+
+What they **do not** publish: a solved entity-manager walk or a decoded
+per-enemy drop-table struct. Wiki enemy drops are playtest-sourced, same
+as §21.10. Auto-loot mods explicitly skip enemy gear/chests (“different
+interact rules”).
+
+**Takeaway for PK:** expect the same ceiling — offline catalogs and
+multipliers are tractable; live component graphs for loot are not
+documented for either game. Reflection/Impact extraction against
+`portal_knights_x64.exe` is a plausible next offline lead (Impact
+Component strings already appear in PK entity defs).
+
+### 22.6 Artifact index (this research pass)
+
+```text
+pk_furniture_catalog.json       TemplateCRC → prop_* + components (~808)
+pk_furniture_server_small.json  same from server_core_small
+pk_drop_tables_dungeon.json     weighted dungeon junk pools
+drop_clusters.json / other_clusters.json   item-hash cluster scans (noisy)
+core_*_kfc0_index.json          KFC0 directory indexes
+item_table_merged.json          item hash → name (~3163)
+```
 
 ---
 
@@ -1045,5 +1918,6 @@ Used in world decode reports, not authoritative game enums:
 - creature (AI behavior tree)
 - interactive switch/lever/plate
 - pacify-able / boss-like
-- sign (`0xF0653E24`)
-- landing pad (`0x0BCB9932`)
+- sign (`0xF0653E24` / User Editable String variants)
+- landing pad (`0x0BCB9932`; surface voxels id 251)
+- guitar / trigger pad (`0xDF6A6AFD` — not a sign)
