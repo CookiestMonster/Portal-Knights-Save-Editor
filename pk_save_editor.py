@@ -758,9 +758,9 @@ TYPE_NAMES = {
     0x13: "uint64", 0x14: "crc32 (hash)", 0x16: "uint8",
     0x18: "uint16",
 }
-# Only scalar types we know how to re-encode safely. Binary is included
-# but can never grow (see bson_encode_scalar) - only shrink-or-equal,
-# same rule the existing set_name() has always used for the name buffer.
+# Only scalar types we know how to re-encode safely. Binary (0x05) can
+# grow/shrink when the caller passes real bytes (knownRecipeIds add/
+# remove); string-typed writes into a binary field still refuse to grow.
 #
 # 0x14 is DUAL-USE, which is why it needs a key check rather than a blanket
 # rule. In one real save it carries both:
@@ -1305,6 +1305,44 @@ def character_class_name(nodes):
 
 GENDER_NAMES = {0: "Male", 1: "Female"}
 GENDER_BY_NAME = {"Male": 0, "Female": 1}
+
+# customization.modelIds bytes 0-3: the gender-linked half of the 8-byte
+# model selector. Confirmed by diffing matched Male/Female character
+# pairs across two races (Human, Elf): this 4-byte prefix was
+# byte-identical for every male sample tested and byte-identical (but
+# different) for every female sample tested, and did not vary with
+# race. Bytes 4-7 (hair/race) are independent and must be left alone by
+# a gender change - see _apply_gender_change.
+GENDER_MODEL_PREFIX = {
+    0: bytes.fromhex("41022734"),  # Male
+    1: bytes.fromhex("91029365"),  # Female
+}
+
+# PlayerCustomizationSelectorCRCs.modelCRCs, viewed as eight 4-byte
+# chunks, mirrors the same 8-byte modelIds selection as CRC hashes
+# instead of raw index bytes. Chunks 0, 2 and 3 (0-based) were confirmed
+# to move with gender the same way modelIds bytes 0-3 do; the rest do
+# not. There's no known universal constant for these CRC chunks (unlike
+# the modelIds prefix above), so a gender change always sources them
+# from a real donor character rather than a hardcoded guess.
+GENDER_SELECTOR_CHUNKS = (0, 2, 3)
+
+
+def _model_prefix_gender(modelids_bytes):
+    """Best-effort gender (0/1) from a modelIds blob's first 4 bytes.
+
+    Returns None if the prefix matches neither confirmed pattern - that
+    does happen on real characters (a body/face preset outside the
+    sample this was confirmed against), so callers must treat None as
+    genuinely unknown rather than assuming male.
+    """
+    if not modelids_bytes or len(modelids_bytes) < 4:
+        return None
+    prefix = bytes(modelids_bytes[:4])
+    for g, pat in GENDER_MODEL_PREFIX.items():
+        if prefix == pat:
+            return g
+    return None
 
 # Category groups offered by each placement picker. Ring and Capes are
 # not class- or panel-specific in game - the same item works in either
@@ -1856,11 +1894,39 @@ def _collect_named_arrays(root, array_key):
     return out
 
 
-def find_normal_bag_array(nodes, array_key, inv_root=None):
-    """Player-facing backpack/hotbar (Player Inventory, first filled match).
+def _array_has_real_stacking(arr):
+    """True if any filled slot's actual stack count (SC) is > 1.
 
-    This is the normal adventure/hotbar mirror (weapons, potions, etc.),
-    not the creative multi-block bar which often lives under Server Inventory.
+    The creative block/item bar always hands you a sample of each item
+    at a stack of exactly 1, even for materials capped much higher (a
+    block capped at 200 still shows 1 there). A real survival hotbar or
+    backpack that has genuinely picked up or crafted stackable items
+    (recipes, resources, consumables) will show some slot's stack above
+    1. This only needs `inventory_slot_map`/`item_entry_fields`, which
+    are defined later in the file - fine, since this is only called at
+    runtime after the whole module has loaded, same as every other
+    early helper here that already calls them (see find_normal_bag_array
+    below).
+    """
+    for _si, entry in inventory_slot_map(arr).items():
+        f = item_entry_fields(entry)
+        sc = f.get("SC")
+        try:
+            stack = int(sc["value"]) if sc is not None else 1
+        except (TypeError, ValueError):
+            stack = 1
+        if stack > 1:
+            return True
+    return False
+
+
+def find_normal_bag_array(nodes, array_key, inv_root=None):
+    """Player-facing backpack/hotbar (adventure mirror under Player Inventory).
+
+    Prefer Player Inventory / CV / {IAB,IBP} over AV. On characters that have
+    used Creative mode, AV (and Server Inventory) hold the creative block bar
+    while CV holds the normal adventure weapons/tools. Picking the first filled
+    array under Player Inventory used to return AV and swap the two tabs.
     """
     roots = []
     if inv_root is not None:
@@ -1869,20 +1935,51 @@ def find_normal_bag_array(nodes, array_key, inv_root=None):
     if pl is not None and pl is not inv_root:
         roots.append(pl)
     roots.append(nodes)
+
+    def _path_str(n):
+        p = n.get("path")
+        if isinstance(p, (list, tuple)):
+            return "/".join(str(x) for x in p)
+        return str(p or "")
+
+    def _rank(n):
+        # Lower is better. Content evidence beats path guessing: the
+        # creative block/item bar always shows a sample of each item at
+        # a stack of exactly 1, even for materials capped much higher
+        # (e.g. blocks capped at 200 still show 1 - you're never handed
+        # 49 of something in creative). A real survival array that has
+        # genuinely picked up or crafted stackable items (recipes,
+        # resources) will show some slot's stack above 1. That's ground
+        # truth regardless of which path (CV/AV/Server Inventory) it
+        # happens to live under, so it dominates the path-string guess
+        # below rather than the other way around.
+        base = 0 if _array_has_real_stacking(n) else 10
+        ps = _path_str(n)
+        if "Player Inventory" in ps or "PlayerInventory" in ps:
+            if "/CV" in ps or "[CV" in ps or "CV[" in ps:
+                return base + 0
+            if "/AV" in ps or "[AV" in ps or "AV[" in ps:
+                return base + 2
+            return base + 1
+        if "Server Inventory" in ps or "ServerInventory" in ps:
+            return base + 5
+        return base + 3
+
+    candidates = []
     seen = set()
     for root in roots:
         for n in _collect_named_arrays(root, array_key):
             if id(n) in seen:
                 continue
             seen.add(id(n))
-            if inventory_slot_map(n):
-                return n
-    # empty array still usable for inserts
-    for root in roots:
-        arrs = _collect_named_arrays(root, array_key)
-        if arrs:
-            return arrs[0]
-    return None
+            candidates.append(n)
+
+    filled = [n for n in candidates if inventory_slot_map(n)]
+    pool = filled if filled else candidates
+    if not pool:
+        return None
+    pool.sort(key=_rank)
+    return pool[0]
 
 
 def _iab_signature(arr):
@@ -1901,8 +1998,9 @@ def find_creative_hotbar_arrays(nodes, normal_iab=None):
 
     The game keeps the creative bar in at least two places:
       - Server Inventory Component / IAB
-      - Player Inventory Component / CV / IAB
-    Editing only one is why changes appear in the editor then revert in-game.
+      - Player Inventory Component / AV / IAB
+    Adventure weapons live under Player Inventory / CV / IAB. Editing only one
+    creative mirror is why changes appear in the editor then revert in-game.
     """
     normal_id = id(normal_iab) if normal_iab is not None else None
     normal_sig = _iab_signature(normal_iab) if normal_iab is not None else None
@@ -1917,13 +2015,26 @@ def find_creative_hotbar_arrays(nodes, normal_iab=None):
         sig = _iab_signature(n)
         if normal_sig is not None and sig == normal_sig:
             continue
-        # Prefer bars that are not the tiny weapon hotbar
         if id(n) in seen:
             continue
         seen.add(id(n))
         out.append(n)
-    # Prefer larger bars first (creative is usually 8 blocks)
-    out.sort(key=lambda a: len(inventory_slot_map(a)), reverse=True)
+    # Prefer fuller bars; among equals prefer Server/AV (creative mirrors).
+    # A genuinely stacked slot (SC>1) proves an array is NOT the creative
+    # sampler bar - see _array_has_real_stacking - so push those to the
+    # back regardless of fill count or path, same signal used to pick
+    # the normal array above, just inverted.
+    def _cre_rank(a):
+        ps = str(a.get("path") or "")
+        score = -len(inventory_slot_map(a))
+        if "Server Inventory" in ps:
+            score -= 10
+        elif "/AV" in ps or "AV[" in ps:
+            score -= 5
+        if _array_has_real_stacking(a):
+            score += 1000
+        return score
+    out.sort(key=_cre_rank)
     return out
 
 
@@ -2701,21 +2812,159 @@ def item_entry_fields(entry_node):
 
 
 # knownRecipeIds uses a *recipe ID* CRC space, NOT the item-table hash of
-# "Recipe for X". Confirmed pairings (user-reported / cross-checked):
+# "Recipe for X" - so a pairing can never be derived automatically, only
+# confirmed by a player (unlock it in-game, note the new serial, compare
+# against the "Recipe for X" name they actually received). This is the
+# seed set confirmed so far:
 RECIPE_ID_NAMES = {
+    0x0ECA6336: "Recipe for Crystal Executioner",
+    0x128676DF: "Recipe for Blades of Dissolution",
+    0x14005C9A: "Recipe for Regular Flavor Sucker Punch",
+    0x3344924A: "Recipe for Meera's Staff of Life",
+    0x4B13DE3A: "Recipe for Joren's Pyre",
     0x527CB4FE: "Recipe for Pumpkin Head",
     0x53061AA4: "Recipe for Target",
-    0x6CA461EB: "Recipe for Short Baroque Cupboard",
     0x56BF20C6: "Recipe for Bamboo Window",
     0x56C2BFB8: "Recipe for Fluffy's Strength",
+    0x6CA461EB: "Recipe for Regular Flavor Cupid Corn Axe",
+    0x71163AA4: "Recipe for Helm of the Crystal Storm",
+    0x72E7F9A9: "Recipe for Pumpkin Spice Cupid Corn Axe",
+    0x79231AEE: "Recipe for Sugar-Free Sucker Punch",
+    0x7CF382B9: "Recipe for Sugar Free Cupid Corn Axe",
+    0x96A3BE68: "Recipe for King's Archer Cap",
+    0xA91512C6: "Recipe for Sickle of Wild Fire",
 }
+
+# ----------------------------------------------------------------------
+# User-confirmed recipe-ID -> name pairings
+#
+# Anything confirmed beyond the seed set above is layered on top from
+# pk_recipe_id_names.json (next to this script, same directory as
+# item_table_merged.json), so new pairings survive across sessions
+# without editing this file by hand. User entries win over the seed set
+# on conflict, since a later confirmation should be able to correct one.
+RECIPE_ID_NAMES_FILE = "pk_recipe_id_names.json"
+
+_USER_RECIPE_NAMES = None
+_RECIPE_NAMES_MERGED = None
+
+
+def user_recipe_names_path():
+    return _here(RECIPE_ID_NAMES_FILE)
+
+
+def user_recipe_names():
+    """User-confirmed recipe-ID -> name pairings from disk (cached)."""
+    global _USER_RECIPE_NAMES
+    if _USER_RECIPE_NAMES is None:
+        _USER_RECIPE_NAMES = {}
+        path = user_recipe_names_path()
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    raw = json.load(fh)
+                if isinstance(raw, dict):
+                    for k, v in raw.items():
+                        crc = _as_u32(k)
+                        name = (str(v).strip() if v is not None else "")
+                        if crc is not None and name:
+                            _USER_RECIPE_NAMES[crc] = name
+            except Exception:
+                _USER_RECIPE_NAMES = {}
+    return _USER_RECIPE_NAMES
+
+
+def recipe_id_names():
+    """Merged recipe-ID -> name map: built-in seed + user file."""
+    global _RECIPE_NAMES_MERGED
+    if _RECIPE_NAMES_MERGED is None:
+        merged = dict(RECIPE_ID_NAMES)
+        merged.update(user_recipe_names())
+        _RECIPE_NAMES_MERGED = merged
+    return _RECIPE_NAMES_MERGED
+
+
+def invalidate_recipe_name_cache():
+    """Drop cached recipe-name maps so the next lookup reloads from disk."""
+    global _USER_RECIPE_NAMES, _RECIPE_NAMES_MERGED
+    _USER_RECIPE_NAMES = None
+    _RECIPE_NAMES_MERGED = None
+
+
+def recipe_item_table_names():
+    """Distinct 'Recipe for X' names from item_table_merged.json.
+
+    This is the candidate pool offered when naming an unmapped
+    knownRecipeIds serial: the same set of crafting-recipe display names
+    the game uses, even though the CRC space is unrelated (see note
+    above) - so a confirmed serial gets a name that actually matches
+    something in the game, not free text. Sourced fresh from item_table()
+    each call so it stays in sync if that file is redownloaded/updated.
+    """
+    names = set()
+    for rec in item_table():
+        cat = rec.get("category") or ""
+        n = rec.get("name") or ""
+        if cat == "Recipes" or n.startswith("Recipe for"):
+            if n:
+                names.add(n)
+    return sorted(names)
+
+
+def add_recipe_id_name(crc, name, log_fn=None):
+    """Persist a user-confirmed recipe-ID -> name pairing.
+
+    Writes pk_recipe_id_names.json next to the script (same tmp+fsync+
+    os.replace pattern as update_item_table_entry) and invalidates the
+    in-memory cache so the new pairing is picked up immediately.
+    Returns the absolute path written.
+    """
+    def L(msg):
+        if log_fn:
+            try:
+                log_fn(msg)
+            except Exception:
+                pass
+
+    crc = _as_u32(crc)
+    if crc is None:
+        raise ValueError("No recipe serial to name")
+    name = (str(name).strip() if name is not None else "")
+    if not name:
+        raise ValueError("Name is empty")
+
+    path = user_recipe_names_path()
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+        if not isinstance(raw, dict):
+            raw = {}
+    except Exception:
+        raw = {}
+
+    key = "0x%08X" % crc
+    old = raw.get(key)
+    raw[key] = name
+    L("recipe id %s: %r -> %r" % (key, old, name))
+
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(raw, fh, indent=2, ensure_ascii=False, sort_keys=True)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+    invalidate_recipe_name_cache()
+    L("wrote %s (%d pairing(s) total)" % (path, len(raw)))
+    return path
 
 
 def recipe_label_for_id(rid):
     """Best name for a knownRecipeIds entry."""
     rid = int(rid) & 0xFFFFFFFF
-    if rid in RECIPE_ID_NAMES:
-        return RECIPE_ID_NAMES[rid]
+    names = recipe_id_names()
+    if rid in names:
+        return names[rid]
     # Sometimes the blob stores the item-table hash of the Recipe item
     rec = item_record_for_crc(rid)
     if rec and (rec.get("category") or "") == "Recipes":
@@ -3703,8 +3952,15 @@ def bson_encode_scalar(node, new_value):
         enc = str(new_value).encode("utf-8") + b"\x00"
         return struct.pack("<i", len(enc)) + enc
     if etype == 0x05:
-        raw = (new_value if isinstance(new_value, (bytes, bytearray))
-               else str(new_value).encode("utf-8"))
+        # Binary: when the caller passes real bytes we allow the buffer to
+        # grow or shrink (needed for knownRecipeIds add/remove). String
+        # paths still refuse to grow so accidental text edits cannot
+        # expand a fixed buffer the way the old mojibake bug did.
+        if isinstance(new_value, (bytes, bytearray)):
+            raw = bytes(new_value)
+            return (struct.pack("<i", len(raw))
+                    + bytes([node.get("subtype") or 0]) + raw)
+        raw = str(new_value).encode("utf-8")
         old_len = node["vend"] - node["vstart"] - 5
         if len(raw) > old_len:
             raise ValueError(
@@ -3776,9 +4032,12 @@ def node_expected_value(node, new_value):
         return struct.unpack("<f", struct.pack("<f", float(new_value)))[0]
     if etype == 0x02:  # string - encode_scalar just does str(new_value)
         return str(new_value)
-    if etype == 0x05:  # fixed-size binary buffer - zero-padded to old_len
-        raw = (new_value if isinstance(new_value, (bytes, bytearray))
-               else str(new_value).encode("utf-8"))
+    if etype == 0x05:  # binary
+        # Bytes path may grow/shrink (knownRecipeIds); string path still
+        # zero-pads to the original fixed buffer length.
+        if isinstance(new_value, (bytes, bytearray)):
+            return bytes(new_value)
+        raw = str(new_value).encode("utf-8")
         old_len = node["vend"] - node["vstart"] - 5
         return bytes(raw) + b"\x00" * (old_len - len(raw))
     if etype == 0x08:  # bool
@@ -4539,6 +4798,67 @@ def user_data_dir():
     return path
 
 
+def desktop_dir():
+    r"""Resolve the real Desktop folder, including OneDrive redirects.
+
+    %USERPROFILE%\Desktop is often a junction or missing when Desktop is
+    moved under OneDrive. Try the shell known folder, then common OneDrive
+    layouts, then the classic path.
+    """
+    candidates = []
+    # Windows: SHGetKnownFolderPath(FOLDERID_Desktop)
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            class GUID(ctypes.Structure):
+                _fields_ = [
+                    ("Data1", wintypes.DWORD),
+                    ("Data2", wintypes.WORD),
+                    ("Data3", wintypes.WORD),
+                    ("Data4", wintypes.BYTE * 8),
+                ]
+            # FOLDERID_Desktop = {B4BFCC3A-DB2C-424C-B029-7FE99A87C641}
+            fid = GUID(0xB4BFCC3A, 0xDB2C, 0x424C,
+                       (wintypes.BYTE * 8)(0xB0, 0x29, 0x7F, 0xE9,
+                                           0x9A, 0x87, 0xC6, 0x41))
+            path_ptr = ctypes.c_wchar_p()
+            hr = ctypes.windll.shell32.SHGetKnownFolderPath(
+                ctypes.byref(fid), 0, None, ctypes.byref(path_ptr))
+            if hr == 0 and path_ptr.value:
+                candidates.append(path_ptr.value)
+            if path_ptr:
+                try:
+                    ctypes.windll.ole32.CoTaskMemFree(path_ptr)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    userprofile = os.environ.get("USERPROFILE", "") or os.path.expanduser("~")
+    onedrive = (os.environ.get("OneDrive")
+                or os.environ.get("OneDriveConsumer")
+                or os.environ.get("OneDriveCommercial")
+                or "")
+    if onedrive:
+        candidates.append(os.path.join(onedrive, "Desktop"))
+    if userprofile:
+        candidates.append(os.path.join(userprofile, "OneDrive", "Desktop"))
+        candidates.append(os.path.join(userprofile, "OneDrive - Personal", "Desktop"))
+        candidates.append(os.path.join(userprofile, "Desktop"))
+    seen = set()
+    for c in candidates:
+        if not c:
+            continue
+        key = os.path.normcase(os.path.abspath(c))
+        if key in seen:
+            continue
+        seen.add(key)
+        if os.path.isdir(c):
+            return c
+    # Last resort even if missing (caller may still try write)
+    return os.path.join(userprofile, "Desktop") if userprofile else os.path.expanduser("~/Desktop")
+
+
 def default_dict_path():
     """Write pk_dict.bin next to the program if allowed, else user data."""
     prog = program_dir()
@@ -4550,10 +4870,11 @@ def default_dict_path():
 def guess_dict_path():
     """Find an existing pk_dict.bin — script dir, user data, common spots."""
     userprofile = os.environ.get("USERPROFILE", "")
+    desk = desktop_dir()
     candidates = [
         os.path.join(program_dir(), "pk_dict.bin"),
         os.path.join(user_data_dir(), "pk_dict.bin"),
-        os.path.join(userprofile, "Desktop", "pk_dict.bin"),
+        os.path.join(desk, "pk_dict.bin") if desk else "",
         os.path.join(userprofile, "Downloads", "pk_dict.bin"),
         os.path.join(userprofile, "Downloads", "PK Manager", "pk_dict.bin"),
     ]
@@ -5016,13 +5337,15 @@ class App(tk.Tk):
         world_actions = ttk.Frame(self.tab_world)
         world_actions.pack(fill="x", padx=6, pady=(0, 2))
         world_actions2 = ttk.Frame(self.tab_world)
-        world_actions2.pack(fill="x", padx=6, pady=(0, 6))
+        world_actions2.pack(fill="x", padx=6, pady=(0, 2))
+        world_actions3 = ttk.Frame(self.tab_world)
+        world_actions3.pack(fill="x", padx=6, pady=(0, 6))
         self.world_refresh_btn = ttk.Button(
             world_actions, text="Refresh list",
             command=self._refresh_worlds_from_disk)
         self.world_refresh_btn.pack(side="left")
         self.world_full_scan_btn = ttk.Button(
-            world_actions, text="Rescan all (chest counts)",
+            world_actions, text="Rescan chests",
             command=lambda: self.refresh_world_list_full(
                 incremental=False, silent=False))
         self.world_full_scan_btn.pack(side="left", padx=4)
@@ -5038,9 +5361,9 @@ class App(tk.Tk):
         ttk.Label(
             world_actions, textvariable=self.world_univ_filter_var,
             foreground="#a60",
-        ).pack(side="left", padx=10)
+        ).pack(side="left", padx=8)
         self.world_open_btn = ttk.Button(
-            world_actions, text="Open selected world",
+            world_actions, text="Open selected",
             command=self.open_selected_world)
         self.world_open_btn.pack(side="left", padx=6)
         self.world_inv_btn = ttk.Button(
@@ -5062,18 +5385,19 @@ class App(tk.Tk):
             command=self.open_world_voxels)
         self.world_voxels_btn.pack(side="left", padx=4)
         ttk.Button(
-            world_actions2, text="Install custom from GitHub…",
+            world_actions3, text="Custom saves…",
             command=self.install_github_custom_save,
-        ).pack(side="left", padx=8)
-        ttk.Button(world_actions2, text="Templates…",
+        ).pack(side="left", padx=(0, 8))
+        ttk.Button(world_actions3, text="Templates…",
                    command=self.open_template_editor).pack(side="left", padx=4)
         ttk.Button(
-            world_actions2, text="Refresh data…",
+            world_actions3, text="Refresh data…",
             command=lambda: self._ensure_github_data(force=True),
         ).pack(side="left", padx=4)
         ttk.Label(
-            world_actions2,
-            text="*Chests = inventory entities. Map = top-down X/Z.",
+            world_actions3,
+            text="*Chests = inventory entities. Map = top-down X/Z. "
+                 "Custom saves download into the Steam remote folder (backup first).",
             foreground="#555",
         ).pack(side="left", padx=8)
         # Buttons that trigger decompression on the main thread - all
@@ -5400,9 +5724,9 @@ class App(tk.Tk):
         out_name = "pk_debug_%s_%s.txt" % (base, stamp)
         candidates = [
             os.path.join(os.path.dirname(path), out_name),
-            os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")),
-                         "Desktop", out_name),
+            os.path.join(desktop_dir(), out_name),
             os.path.join(os.path.dirname(os.path.abspath(__file__)), out_name),
+            os.path.join(user_data_dir(), out_name),
         ]
         out_path = None
         for cand in candidates:
@@ -9126,8 +9450,35 @@ class App(tk.Tk):
 
         xs = [p[0] for p in pts]
         zs = [p[1] for p in pts]
-        min_x, max_x = min(xs), max(xs)
-        min_z, max_z = min(zs), max(zs)
+        # Robust bounds: outliers (stray entities / mis-mapped chunks) used to
+        # stretch the map so the real island sat tiny in a corner. Use the
+        # inter-percentile range of entity+terrain points, then gently expand
+        # to include near-edge markers without re-including far outliers.
+        def _pct_bounds(vals, lo=0.05, hi=0.95):
+            if not vals:
+                return 0.0, 1.0
+            s = sorted(vals)
+            n = len(s)
+            if n < 8:
+                return float(s[0]), float(s[-1])
+            i_lo = max(0, int(n * lo))
+            i_hi = min(n - 1, max(i_lo + 1, int(n * hi)))
+            return float(s[i_lo]), float(s[i_hi])
+
+        min_x, max_x = _pct_bounds(xs)
+        min_z, max_z = _pct_bounds(zs)
+        core_w = max(max_x - min_x, 1.0)
+        core_h = max(max_z - min_z, 1.0)
+        expand = max(16.0, 0.15 * max(core_w, core_h))
+        cx0 = (min_x + max_x) * 0.5
+        cz0 = (min_z + max_z) * 0.5
+        for x, z in pts:
+            if abs(x - cx0) <= core_w * 0.5 + expand:
+                min_x = min(min_x, x)
+                max_x = max(max_x, x)
+            if abs(z - cz0) <= core_h * 0.5 + expand:
+                min_z = min(min_z, z)
+                max_z = max(max_z, z)
         pad = max(8.0, 0.05 * max(max_x - min_x, max_z - min_z, 1.0))
         min_x -= pad
         max_x += pad
@@ -10345,6 +10696,31 @@ class App(tk.Tk):
 
         ttk.Button(row, text="Browse…", command=browse).pack(side="left")
 
+        # Optional: overwrite the currently selected world file (same path)
+        # so the custom content appears under the existing island slot.
+        replace_var = tk.BooleanVar(value=False)
+        sel_world_path = None
+        try:
+            path, info = self._resolve_world_path()
+            if path and os.path.isfile(path):
+                sel_world_path = path
+        except Exception:
+            sel_world_path = None
+        if sel_world_path:
+            ttk.Checkbutton(
+                dlg,
+                text="Replace currently selected world file\n(%s)"
+                     % os.path.basename(sel_world_path),
+                variable=replace_var,
+            ).pack(anchor="w", padx=10, pady=4)
+        else:
+            ttk.Label(
+                dlg,
+                text="Tip: select a world in the Worlds tab first to enable "
+                     "“replace selected world”.",
+                foreground="#666",
+            ).pack(anchor="w", padx=10, pady=2)
+
         status = ttk.Label(dlg, text="", foreground="#333")
         status.pack(anchor="w", padx=10)
 
@@ -10355,11 +10731,15 @@ class App(tk.Tk):
                 return
             label, rel, local_name = GITHUB_CUSTOM_SAVES[sel[0]]
             dest_dir = dest_var.get().strip()
-            if not dest_dir or not os.path.isdir(dest_dir):
-                messagebox.showerror(
-                    "Folder", "Choose a valid Steam remote folder.", parent=dlg)
-                return
-            dest_path = os.path.join(dest_dir, local_name)
+            if replace_var.get() and sel_world_path:
+                dest_path = sel_world_path
+            else:
+                if not dest_dir or not os.path.isdir(dest_dir):
+                    messagebox.showerror(
+                        "Folder",
+                        "Choose a valid Steam remote folder.", parent=dlg)
+                    return
+                dest_path = os.path.join(dest_dir, local_name)
             # URL-encode path segments
             from urllib.parse import quote
             url = GITHUB_RAW_BASE + quote(rel, safe="")
@@ -12420,8 +12800,18 @@ class CharacterEditor(tk.Toplevel):
         Only rewriting raceCRC leaves Elf modelIds/textureIds on a Human
         (and vice versa), which is what "corrupts" the character in-game.
         We also set effectPackageIndex when known, and copy model/texture/
-        color binaries from another character in this file with the same
-        class + gender + target race when one exists.
+        color Id *and* CRC binaries from another character in this file with
+        the same class + target race when one exists. Id arrays index into
+        the CRC category lists — copying only Ids leaves the old race's
+        categories and produces the "says Human, still looks Elf" result.
+
+        There are two independent representations of the same selections:
+          - customization/{modelIds,textureIds,colorIds,effectPackageIndex,
+            modelCRCs,textureCRCs,colorCRCs} under CharacterSetup
+          - PlayerCustomizationSelectorCRCs/{modelCRCs,textureCRCs,
+            colorCRCs,effectPackageCRC} under ServerPlayerControlComponent
+        Both must stay in sync; a mismatch is a strong candidate for the
+        in-game "Corrupted Character" detection.
         """
         if race_node is None:
             messagebox.showerror("Missing", "No raceCRC field.", parent=self)
@@ -12464,6 +12854,15 @@ class CharacterEditor(tk.Toplevel):
         if custom is not None:
             kids = {ch["key"]: ch for ch in custom["children"]}
 
+        # Parallel CRC block: ServerPlayerControlComponent/
+        # PlayerCustomizationSelectorCRCs/{modelCRCs,textureCRCs,colorCRCs,
+        # effectPackageCRC}. Independent of the customization/ Id+CRC arrays.
+        kids_selector = {}
+        for n in _walk(self.nodes):
+            if n.get("key") == "PlayerCustomizationSelectorCRCs" and n.get("children"):
+                kids_selector = {ch["key"]: ch for ch in n["children"]}
+                break
+
         # Current class / gender for matching donor
         class_crc = None
         gender = None
@@ -12476,7 +12875,9 @@ class CharacterEditor(tk.Toplevel):
                     gender = int(n["value"])
                     break
 
-        donor = None  # dict of binary fields from another CHAR in this file
+        donor = None  # dict of binary fields from customization of another CHAR
+        donor_selector = None  # parallel PlayerCustomizationSelectorCRCs kids
+        donor_label = None  # for log: entity id / slot
         try:
             for ee, ddoc, kkind, eerr in iter_docs(
                     self.app.container, self.app.dctx):
@@ -12486,6 +12887,7 @@ class CharacterEditor(tk.Toplevel):
                     nnodes, _ = bson_parse(ddoc)
                 except Exception:
                     continue
+                slot = character_slot_id(ddoc)
                 for n in _walk(nnodes):
                     if n.get("key") != "customization" or not n.get("children"):
                         continue
@@ -12497,11 +12899,25 @@ class CharacterEditor(tk.Toplevel):
                         continue
                     if (int(k2["raceCRC"]["value"]) & 0xFFFFFFFF) != new_crc:
                         continue
-                    if class_crc is not None and "classCRC" in k2:
+                    # Prefer same class; if target class unknown, still accept race match
+                    if class_crc is not None:
+                        if "classCRC" not in k2:
+                            continue
                         if (int(k2["classCRC"]["value"]) & 0xFFFFFFFF) != class_crc:
                             continue
                     # gender match optional
                     donor = k2
+                    donor_label = "entity %s" % ee.get("id")
+                    if slot is not None:
+                        donor_label += " (slot %s)" % slot
+                    # Grab the donor's parallel SelectorCRCs block from the
+                    # same entity document (not from customization).
+                    for sn in _walk(nnodes):
+                        if (sn.get("key") == "PlayerCustomizationSelectorCRCs"
+                                and sn.get("children")):
+                            donor_selector = {
+                                ch["key"]: ch for ch in sn["children"]}
+                            break
                     break
                 if donor:
                     break
@@ -12511,19 +12927,39 @@ class CharacterEditor(tk.Toplevel):
         edits = [(race_node, new_crc)]
         notes = ["raceCRC → %s (0x%08X)" % (race_name, new_crc)]
 
-        # effectPackageIndex
+        # effectPackageIndex — prefer donor (class+race accurate) over the
+        # coarse RACE_EFFECT_PACKAGE table (e.g. Human Warrior is 1, not 4).
         eff = kids.get("effectPackageIndex")
-        want_eff = RACE_EFFECT_PACKAGE.get(new_crc)
-        if eff is not None and want_eff is not None:
-            edits.append((eff, int(want_eff)))
-            notes.append("effectPackageIndex → %d" % want_eff)
+        if donor and eff is not None and "effectPackageIndex" in donor:
+            try:
+                donor_eff = int(donor["effectPackageIndex"]["value"])
+                edits.append((eff, donor_eff))
+                notes.append(
+                    "copied effectPackageIndex=%d from donor" % donor_eff)
+            except (TypeError, ValueError, KeyError):
+                pass
+        else:
+            want_eff = RACE_EFFECT_PACKAGE.get(new_crc)
+            if eff is not None and want_eff is not None:
+                edits.append((eff, int(want_eff)))
+                notes.append("effectPackageIndex → %d (fallback table)" % want_eff)
 
-        # Copy appearance binaries from donor when present
+        # Copy appearance binaries from donor when present.
+        # modelIds[i] indexes into the category named by modelCRCs[i] (same
+        # for texture/color) — copying only the Id arrays leaves the old
+        # race's CRC categories in place and is exactly the "says Human,
+        # still looks Elf" failure mode. Copy both Id and CRC arrays.
         if donor:
-            for key in ("modelIds", "textureIds", "colorIds"):
+            if donor_label:
+                notes.append("donor: %s" % donor_label)
+            for key in (
+                    "modelIds", "textureIds", "colorIds",
+                    "modelCRCs", "textureCRCs", "colorCRCs"):
                 src_n = donor.get(key)
                 dst_n = kids.get(key)
                 if src_n is None or dst_n is None:
+                    if src_n is not None and dst_n is None:
+                        notes.append("%s present on donor but missing on target — skipped" % key)
                     continue
                 if not isinstance(src_n.get("value"), (bytes, bytearray)):
                     continue
@@ -12537,7 +12973,55 @@ class CharacterEditor(tk.Toplevel):
                            len(bytes(dst_n["value"]))))
                     continue
                 edits.append((dst_n, bytes(src_n["value"])))
-                notes.append("copied %s from same class/race character" % key)
+                notes.append("copied %s from donor" % key)
+
+            # Second representation: PlayerCustomizationSelectorCRCs.
+            # Same appearance selections, stored as full CRC hashes rather
+            # than index bytes. Leaving this on the old race while
+            # customization/ is updated is a strong candidate for the
+            # in-game "Corrupted Character" check.
+            if donor_selector and kids_selector:
+                for key in ("modelCRCs", "textureCRCs", "colorCRCs"):
+                    src_n = donor_selector.get(key)
+                    dst_n = kids_selector.get(key)
+                    if src_n is None or dst_n is None:
+                        if src_n is not None and dst_n is None:
+                            notes.append(
+                                "SelectorCRCs.%s present on donor but "
+                                "missing on target — skipped" % key)
+                        continue
+                    if not isinstance(src_n.get("value"), (bytes, bytearray)):
+                        continue
+                    if not isinstance(dst_n.get("value"), (bytes, bytearray)):
+                        continue
+                    if len(bytes(src_n["value"])) != len(bytes(dst_n["value"])):
+                        notes.append(
+                            "SelectorCRCs.%s length mismatch (donor %d vs %d) "
+                            "— skipped"
+                            % (key, len(bytes(src_n["value"])),
+                               len(bytes(dst_n["value"]))))
+                        continue
+                    edits.append((dst_n, bytes(src_n["value"])))
+                    notes.append("copied SelectorCRCs.%s from donor" % key)
+                # effectPackageCRC is a scalar hash (type 0x14), not a byte blob
+                if ("effectPackageCRC" in donor_selector
+                        and "effectPackageCRC" in kids_selector):
+                    try:
+                        src_ep = donor_selector["effectPackageCRC"]["value"]
+                        dst_ep = kids_selector["effectPackageCRC"]
+                        edits.append((dst_ep, int(src_ep) & 0xFFFFFFFF))
+                        notes.append(
+                            "copied SelectorCRCs.effectPackageCRC from donor")
+                    except (TypeError, ValueError, KeyError):
+                        pass
+            elif donor_selector and not kids_selector:
+                notes.append(
+                    "donor has PlayerCustomizationSelectorCRCs but target "
+                    "does not — skipped selector copy")
+            elif kids_selector and not donor_selector:
+                notes.append(
+                    "target has PlayerCustomizationSelectorCRCs but donor "
+                    "does not — selector block left unchanged")
         else:
             notes.append(
                 "No same class+race donor in this file — only CRC/effect "
@@ -12556,6 +13040,207 @@ class CharacterEditor(tk.Toplevel):
         else:
             messagebox.showerror(
                 "Race change failed",
+                "Write/verify failed — see log. Restore .bak if needed.",
+                parent=self)
+
+
+    def _apply_gender_change(self, gender_node, new_gender, gender_name):
+        """Change gender and the appearance bytes that actually show it.
+
+        Writing only the scalar `gender` field (0/1) does not change the
+        visible model - the body/face is selected by the first 4 bytes
+        of customization.modelIds, mirrored in customization.modelCRCs
+        and PlayerCustomizationSelectorCRCs.modelCRCs (two independent
+        representations of the same selections - see
+        _apply_race_change's docstring for why both must stay in sync).
+
+        Byte-diffing matched Male/Female character pairs across Human
+        and Elf confirmed a clean, race-independent split:
+            modelIds byte 0-3: gender (41 02 27 34 male / 91 02 93 65 female)
+            modelIds byte 4-7: hair/race - untouched by a gender change
+        and that PlayerCustomizationSelectorCRCs.modelCRCs, read as
+        eight 4-byte chunks, moves chunks 0/2/3 with gender the same
+        way. There's no known universal constant for those CRC chunks
+        (unlike the modelIds prefix), so this always prefers a real
+        donor - another character in this save whose own modelIds
+        prefix confidently matches the target gender - and copies only
+        the donor's gender-linked bytes. Neither this character's nor
+        the donor's hair/race bytes are ever touched.
+
+        customization.modelCRCs is assumed to mirror the identical
+        chunk layout (it's the other representation of the same
+        selection per _apply_race_change), though that specific mirror
+        was not independently byte-diffed the way modelIds and the
+        PlayerCustomizationSelectorCRCs copy were - the confirmation
+        note says so explicitly when this touches it.
+        """
+        if gender_node is None:
+            messagebox.showerror("Missing", "No gender field.", parent=self)
+            return
+        if not self._ensure_char_write_target():
+            return
+        new_gender = int(new_gender)
+
+        # Locate this character's customization + SelectorCRCs siblings,
+        # same lookup pattern as _apply_race_change.
+        custom = None
+        for n in _walk(self.nodes):
+            if n.get("key") != "customization" or not n.get("children"):
+                continue
+            if "CharacterSetup" in str(n.get("path") or ""):
+                custom = n
+                break
+        kids = {}
+        if custom is not None:
+            kids = {ch["key"]: ch for ch in custom["children"]}
+
+        kids_selector = {}
+        for n in _walk(self.nodes):
+            if (n.get("key") == "PlayerCustomizationSelectorCRCs"
+                    and n.get("children")):
+                kids_selector = {ch["key"]: ch for ch in n["children"]}
+                break
+
+        model_ids_node = kids.get("modelIds")
+        if model_ids_node is None or not isinstance(
+                model_ids_node.get("value"), (bytes, bytearray)):
+            messagebox.showerror(
+                "Missing",
+                "No customization.modelIds field on this character - "
+                "can't safely change the visible model.", parent=self)
+            return
+        cur_model_bytes = bytes(model_ids_node["value"])
+        cur_model_crcs_node = kids.get("modelCRCs")
+        cur_selector_crcs_node = kids_selector.get("modelCRCs")
+
+        # Find a donor: another character in this file whose OWN
+        # modelIds prefix confidently matches the target gender.
+        donor_model_bytes = None
+        donor_model_crcs_bytes = None
+        donor_selector_crcs_bytes = None
+        donor_label = None
+        try:
+            for ee, ddoc, kkind, eerr in iter_docs(
+                    self.app.container, self.app.dctx):
+                if ee["id"] == self.e["id"] or ddoc is None:
+                    continue
+                try:
+                    nnodes, _ = bson_parse(ddoc)
+                except Exception:
+                    continue
+                d_custom = None
+                for n in _walk(nnodes):
+                    if n.get("key") != "customization" or not n.get("children"):
+                        continue
+                    if "CharacterSetup" not in str(n.get("path") or ""):
+                        continue
+                    d_custom = n
+                    break
+                if d_custom is None:
+                    continue
+                dk = {ch["key"]: ch for ch in d_custom["children"]}
+                dmi = dk.get("modelIds")
+                if dmi is None or not isinstance(
+                        dmi.get("value"), (bytes, bytearray)):
+                    continue
+                dmi_bytes = bytes(dmi["value"])
+                if _model_prefix_gender(dmi_bytes) != new_gender:
+                    continue
+                donor_model_bytes = dmi_bytes
+                dmc = dk.get("modelCRCs")
+                if dmc is not None and isinstance(
+                        dmc.get("value"), (bytes, bytearray)):
+                    donor_model_crcs_bytes = bytes(dmc["value"])
+                slot = character_slot_id(ddoc)
+                donor_label = "entity %s" % ee.get("id")
+                if slot is not None:
+                    donor_label += " (slot %s)" % slot
+                for sn in _walk(nnodes):
+                    if (sn.get("key") == "PlayerCustomizationSelectorCRCs"
+                            and sn.get("children")):
+                        dsel = {ch["key"]: ch for ch in sn["children"]}
+                        dsc = dsel.get("modelCRCs")
+                        if dsc is not None and isinstance(
+                                dsc.get("value"), (bytes, bytearray)):
+                            donor_selector_crcs_bytes = bytes(dsc["value"])
+                        break
+                break
+        except Exception as ex:
+            self.app.log("Gender donor search: %s" % ex)
+
+        edits = [(gender_node, new_gender)]
+        notes = ["gender -> %s" % gender_name]
+
+        def _swap_chunks(dst_node, donor_bytes, label, confirmed):
+            if dst_node is None or donor_bytes is None:
+                return
+            if not isinstance(dst_node.get("value"), (bytes, bytearray)):
+                return
+            cur = bytes(dst_node["value"])
+            if len(cur) != 32 or len(donor_bytes) != 32:
+                notes.append(
+                    "%s: unexpected length (want 32, got %d/%d) — "
+                    "skipped" % (label, len(cur), len(donor_bytes)))
+                return
+            chunks = [bytearray(cur[i * 4:(i + 1) * 4]) for i in range(8)]
+            dchunks = [donor_bytes[i * 4:(i + 1) * 4] for i in range(8)]
+            changed = False
+            for ci in GENDER_SELECTOR_CHUNKS:
+                if bytes(chunks[ci]) != dchunks[ci]:
+                    chunks[ci] = bytearray(dchunks[ci])
+                    changed = True
+            if changed:
+                new_bytes = b"".join(bytes(c) for c in chunks)
+                edits.append((dst_node, new_bytes))
+                tag = "confirmed" if confirmed else "assumed same layout"
+                notes.append(
+                    "%s chunks %s -> donor's (%s)" % (
+                        label,
+                        ",".join(str(c) for c in GENDER_SELECTOR_CHUNKS),
+                        tag))
+
+        if donor_model_bytes is not None:
+            new_model_bytes = donor_model_bytes[:4] + cur_model_bytes[4:]
+            if new_model_bytes != cur_model_bytes:
+                edits.append((model_ids_node, new_model_bytes))
+                notes.append(
+                    "modelIds bytes 0-3 -> donor's (%s), hair/race bytes "
+                    "unchanged" % donor_label)
+
+            _swap_chunks(
+                cur_selector_crcs_node, donor_selector_crcs_bytes,
+                "PlayerCustomizationSelectorCRCs.modelCRCs",
+                confirmed=True)
+            _swap_chunks(
+                cur_model_crcs_node, donor_model_crcs_bytes,
+                "customization.modelCRCs",
+                confirmed=False)
+
+            if len(edits) == 1:
+                notes.append(
+                    "modelIds/modelCRCs already matched %s - only the "
+                    "gender flag itself was stale." % gender_name)
+        else:
+            notes.append(
+                "No same-file character confidently identified as %s "
+                "(by modelIds prefix) - modelIds/modelCRCs left "
+                "unchanged, only the gender flag itself was updated. "
+                "The character may still visually look like its "
+                "previous gender until you re-customize in-game or a "
+                "%s donor exists in this file." % (gender_name, gender_name))
+
+        msg = "Change gender to %s?\n\n%s" % (gender_name, "\n".join(notes))
+        if not messagebox.askyesno("Confirm gender change", msg, parent=self):
+            return
+        ok = self.app.commit_bson_edits(
+            self.e, self.doc, self.kind, edits,
+            verify_label="gender -> %s" % gender_name)
+        if ok:
+            self.app.log("Gender change: " + "; ".join(notes))
+            self.reload()
+        else:
+            messagebox.showerror(
+                "Gender change failed",
                 "Write/verify failed — see log. Restore .bak if needed.",
                 parent=self)
 
@@ -12588,10 +13273,10 @@ class CharacterEditor(tk.Toplevel):
                 text="Creative Hotbar (%d/8)" % filled)
             note = ttk.Label(
                 frame,
-                text="Creative-mode block bar (alternate IAB). "
-                     "Normal weapons stay on Hotbar. "
-                     "Armor = Equipment tab (IEQ; empty until you equip). "
-                     "Backpack = same IBP as adventure. "
+                text="Creative-mode block bar (Server / AV IAB mirrors). "
+                     "Adventure weapons/tools are on the Hotbar tab (CV). "
+                     "Armor = Equipment tab (IEQ). "
+                     "Backpack is shared. "
                      "Fly is a runtime Creative flag — not stored on the character.",
                 foreground="#555", wraplength=720)
             note.pack(anchor="w", padx=6, pady=(6, 0))
@@ -12937,10 +13622,12 @@ class CharacterEditor(tk.Toplevel):
         parent = self._tab_recipes
         ttk.Label(
             parent,
-            text="knownRecipeIds blob: packed recipe-ID CRCs (NOT the same "
-                 "as item_table 'Recipe for X' hashes). Slot # is save order "
-                 "only — the game can prepend/reorder when you unlock more. "
-                 "Named rows use RECIPE_ID_NAMES; send unknown 0x… IDs to map more.",
+            text="knownRecipeIds: packed recipe-ID CRCs (NOT item-table "
+                 "'Recipe for X' hashes). List is sorted by name so you can "
+                 "find rows. Change / Add / Remove rewrite the blob like "
+                 "inventory edits. Select an \"(unmapped) 0x…\" row and "
+                 "click \"Name unmapped…\" to pin down a name for it "
+                 "(saved to pk_recipe_id_names.json so it sticks).",
         ).pack(anchor="w", padx=8, pady=6)
 
         recipe_bin = None
@@ -12949,18 +13636,18 @@ class CharacterEditor(tk.Toplevel):
                 recipe_bin = n
                 break
 
-        cols = ("idx", "id", "name", "category")
+        cols = ("name", "id", "slot")
         tree = ttk.Treeview(parent, columns=cols, show="headings",
-                            height=16, selectmode="browse")
-        for col, text, w in (("idx", "#", 40),
+                            height=16, selectmode="extended")
+        for col, text, w in (("name", "Recipe", 380),
                              ("id", "Serial / ID", 110),
-                             ("name", "Recipe", 360),
-                             ("category", "Category", 120)):
+                             ("slot", "Save #", 60)):
             tree.heading(col, text=text)
             tree.column(col, width=w, anchor="w")
         tree.pack(fill="both", expand=True, padx=8, pady=4)
 
-        row_ids = {}  # iid -> "0x........"
+        # iid -> (save_index, crc)
+        row_meta = {}
 
         def copy_selected(_evt=None):
             sel = tree.selection()
@@ -12968,9 +13655,9 @@ class CharacterEditor(tk.Toplevel):
                 return
             pieces = []
             for iid in sel:
-                rid = row_ids.get(iid)
-                if rid:
-                    pieces.append(rid)
+                meta = row_meta.get(iid)
+                if meta:
+                    pieces.append("0x%08X" % meta[1])
                 else:
                     vals = tree.item(iid, "values")
                     if vals and len(vals) > 1:
@@ -12986,42 +13673,407 @@ class CharacterEditor(tk.Toplevel):
             except Exception as ex:
                 messagebox.showerror("Copy failed", str(ex), parent=self)
 
+        def change_recipe():
+            sel = tree.selection()
+            if not sel or sel[0] not in row_meta or recipe_bin is None:
+                return
+            save_idx, old_crc = row_meta[sel[0]]
+            self._recipe_picker(
+                title="Change recipe (save #%d)" % (save_idx + 1),
+                on_pick=lambda new_crc: self._set_recipe_at(
+                    recipe_bin, save_idx, new_crc),
+                exclude=None)
+
+        def add_recipe():
+            if recipe_bin is None:
+                messagebox.showinfo(
+                    "No field",
+                    "This character has no knownRecipeIds field to write.",
+                    parent=self)
+                return
+            existing = set(parse_recipe_ids(recipe_bin["value"]))
+            self._recipe_picker(
+                title="Add unlocked recipe",
+                on_pick=lambda new_crc: self._add_recipe(recipe_bin, new_crc),
+                exclude=existing)
+
+        def remove_selected(_evt=None):
+            if recipe_bin is None:
+                return
+            sel = [s for s in tree.selection() if s in row_meta]
+            if not sel:
+                return
+            indices = sorted(
+                (row_meta[s][0] for s in sel), reverse=True)
+            names = []
+            for s in sel:
+                vals = tree.item(s, "values")
+                names.append(vals[0] if vals else "?")
+            if not messagebox.askyesno(
+                    "Remove recipes",
+                    "Remove %d recipe(s) from knownRecipeIds?\n\n%s"
+                    % (len(indices), "\n".join(names[:12])
+                       + ("\n…" if len(names) > 12 else "")),
+                    parent=self):
+                return
+            self._remove_recipes_at(recipe_bin, indices)
+
+        def select_all(_evt=None):
+            tree.selection_set(tree.get_children())
+            return "break"
+
+        def name_unmapped():
+            sel = tree.selection()
+            if not sel or sel[0] not in row_meta:
+                messagebox.showinfo(
+                    "Select a recipe",
+                    "Select an \"(unmapped) 0x…\" row first.", parent=self)
+                return
+            _save_idx, crc = row_meta[sel[0]]
+            label = recipe_label_for_id(crc)
+            if not label.startswith("0x"):
+                messagebox.showinfo(
+                    "Already named",
+                    "0x%08X is already mapped to:\n%s" % (crc, label),
+                    parent=self)
+                return
+            self._name_recipe_serial_dialog(
+                crc, on_named=lambda _c, _n: self.reload())
+
         btns = ttk.Frame(parent)
         btns.pack(fill="x", padx=8, pady=(0, 6))
-        ttk.Button(btns, text="Copy ID", command=copy_selected).pack(
+        ttk.Button(btns, text="Change…", command=change_recipe).pack(
             side="left")
+        ttk.Button(btns, text="Add…", command=add_recipe).pack(
+            side="left", padx=6)
+        ttk.Button(btns, text="Remove selected",
+                   command=remove_selected).pack(side="left", padx=6)
+        ttk.Button(btns, text="Name unmapped…",
+                   command=name_unmapped).pack(side="left", padx=6)
+        ttk.Button(btns, text="Copy ID", command=copy_selected).pack(
+            side="left", padx=6)
         ttk.Label(
             btns,
-            text="  Select a row · Copy ID or Ctrl+C  ·  IDs are recipe serials "
-                 "(not item-table hashes)",
+            text="  Double-click to change · Del removes · IDs are recipe "
+                 "serials (not item hashes)",
             foreground="#555",
         ).pack(side="left")
         tree.bind("<Control-c>", copy_selected)
         tree.bind("<Control-C>", copy_selected)
+        tree.bind("<Double-1>", lambda _e: change_recipe())
+        tree.bind("<Delete>", remove_selected)
+        tree.bind("<BackSpace>", remove_selected)
+        tree.bind("<Control-a>", select_all)
+        tree.bind("<Control-A>", select_all)
 
         if recipe_bin is None:
-            tree.insert("", "end", values=("", "", "(no knownRecipeIds field)",
-                                           ""))
+            tree.insert("", "end", values=("(no knownRecipeIds field)", "", ""))
             return
 
         ids = parse_recipe_ids(recipe_bin["value"])
         if not ids:
-            tree.insert("", "end", values=("", "", "(no recipes unlocked)", ""))
+            tree.insert("", "end", values=("(no recipes unlocked)", "", ""))
+            return
+
+        # Build (display_name, crc, save_index) then sort by name so the
+        # list is readable. Save # column still shows original blob order.
+        rows = []
         for i, crc in enumerate(ids):
             crc = int(crc) & 0xFFFFFFFF
+            if crc == 0:
+                continue  # padding / empty slot from a prior shrink
             name = recipe_label_for_id(crc)
             if name.startswith("0x"):
-                display = "(unmapped)"
+                display = "(unmapped)  0x%08X" % crc
+                sort_key = "\xff" + ("%08X" % crc)  # unmapped after named
             else:
-                # strip trailing hex if recipe_label already included it
                 display = name.split("  (0x")[0]
-            rec = item_record_for_crc(crc)
-            cat = (rec.get("category") if rec else None) or (
-                "Recipe ID" if crc in RECIPE_ID_NAMES else "")
+                sort_key = display.lower()
+            rows.append((sort_key, display, crc, i))
+        rows.sort(key=lambda r: r[0])
+
+        for _sk, display, crc, save_idx in rows:
             hex_id = "0x%08X" % crc
             iid = tree.insert(
-                "", "end", values=(i + 1, hex_id, display, cat))
-            row_ids[iid] = hex_id
+                "", "end", values=(display, hex_id, save_idx + 1))
+            row_meta[iid] = (save_idx, crc)
+
+    def _pack_recipe_ids(self, ids):
+        """Pack a list of uint32 recipe serials into knownRecipeIds bytes."""
+        out = bytearray()
+        for crc in ids:
+            out += struct.pack("<I", int(crc) & 0xFFFFFFFF)
+        return bytes(out)
+
+    def _set_recipe_at(self, recipe_bin, save_idx, new_crc):
+        if not self._ensure_char_write_target():
+            return
+        ids = parse_recipe_ids(recipe_bin["value"])
+        if save_idx < 0 or save_idx >= len(ids):
+            messagebox.showerror("Bad index", "Recipe slot out of range.",
+                                 parent=self)
+            return
+        new_crc = int(new_crc) & 0xFFFFFFFF
+        if ids[save_idx] == new_crc:
+            return
+        ids[save_idx] = new_crc
+        blob = self._pack_recipe_ids(ids)
+        if self.app.commit_bson_edit(
+                self.e, self.doc, self.kind, recipe_bin, blob):
+            self.app.log("Recipe slot %d → 0x%08X (%s)" % (
+                save_idx + 1, new_crc, recipe_label_for_id(new_crc)))
+            self.reload()
+
+    def _add_recipe(self, recipe_bin, new_crc):
+        if not self._ensure_char_write_target():
+            return
+        new_crc = int(new_crc) & 0xFFFFFFFF
+        ids = parse_recipe_ids(recipe_bin["value"])
+        # Drop trailing zero padding left by older shrinks
+        while ids and ids[-1] == 0:
+            ids.pop()
+        if new_crc in ids:
+            messagebox.showinfo(
+                "Already unlocked",
+                "0x%08X (%s) is already in knownRecipeIds."
+                % (new_crc, recipe_label_for_id(new_crc)),
+                parent=self)
+            return
+        ids.append(new_crc)
+        blob = self._pack_recipe_ids(ids)
+        if self.app.commit_bson_edit(
+                self.e, self.doc, self.kind, recipe_bin, blob):
+            self.app.log("Added recipe 0x%08X (%s)" % (
+                new_crc, recipe_label_for_id(new_crc)))
+            self.reload()
+
+    def _remove_recipes_at(self, recipe_bin, indices_desc):
+        """indices_desc: save indices sorted high→low so pops stay valid."""
+        if not self._ensure_char_write_target():
+            return
+        ids = parse_recipe_ids(recipe_bin["value"])
+        removed = []
+        for idx in indices_desc:
+            if 0 <= idx < len(ids):
+                removed.append(ids.pop(idx))
+        # Strip trailing zeros
+        while ids and ids[-1] == 0:
+            ids.pop()
+        blob = self._pack_recipe_ids(ids)
+        if self.app.commit_bson_edit(
+                self.e, self.doc, self.kind, recipe_bin, blob):
+            self.app.log("Removed %d recipe(s): %s" % (
+                len(removed),
+                ", ".join("0x%08X" % c for c in removed[:8])
+                + ("…" if len(removed) > 8 else "")))
+            self.reload()
+
+    def _recipe_picker(self, title, on_pick, exclude=None):
+        """Searchable list of known recipe serials (+ raw hex entry).
+
+        Recipe serials are a different CRC space from item-table
+        'Recipe for X' hashes. Only mapped serials (seed set + anything
+        confirmed via "Name this serial…") or a typed 0x… serial can be
+        written into knownRecipeIds.
+        """
+        dlg = tk.Toplevel(self)
+        dlg.title(title)
+        dlg.geometry("580x480")
+        info = ttk.Label(dlg, text="", wraplength=560, justify="left")
+        info.pack(anchor="w", padx=8, pady=6)
+        qvar = tk.StringVar()
+        entry = ttk.Entry(dlg, textvariable=qvar)
+        entry.pack(fill="x", padx=8, pady=4)
+        entry.focus_set()
+        status = ttk.Label(dlg, text="", foreground="#555")
+        status.pack(anchor="w", padx=8)
+        lb = tk.Listbox(dlg, font=("Courier New", 9))
+        lb.pack(fill="both", expand=True, padx=8, pady=4)
+        rows = []  # list of (crc, label)
+        state = {"raw_crc": None, "raw_mapped": True}
+
+        def _tokens_match(q, blob):
+            """Substring match, or every whitespace token appears in blob."""
+            if not q:
+                return True
+            if q in blob:
+                return True
+            toks = [t for t in q.split() if t]
+            return bool(toks) and all(t in blob for t in toks)
+
+        def refresh(*_a):
+            names = recipe_id_names()
+            info.config(
+                text="Mapped recipe serials only (not item-table hashes). "
+                     "Clear the box to see all %d known IDs, or type part "
+                     "of a name / a raw 0x… serial. Typed serials with no "
+                     "name yet can be labeled with \"Name this serial…\" "
+                     "below." % len(names))
+            lb.delete(0, "end")
+            del rows[:]
+            q = (qvar.get() or "").strip().lower()
+            # Raw hex serial → always offer as a direct pick
+            raw_crc = None
+            qs = q[2:] if q.startswith("0x") else q
+            if qs and all(c in "0123456789abcdef" for c in qs) and len(qs) >= 6:
+                try:
+                    raw_crc = int(qs, 16) & 0xFFFFFFFF
+                except ValueError:
+                    raw_crc = None
+            state["raw_crc"] = raw_crc
+            state["raw_mapped"] = raw_crc in names if raw_crc is not None else True
+            name_btn.config(
+                state=("normal" if (raw_crc is not None
+                                    and not state["raw_mapped"])
+                       else "disabled"))
+            if raw_crc is not None:
+                if exclude is None or raw_crc not in exclude:
+                    label = recipe_label_for_id(raw_crc)
+                    rows.append((raw_crc, label))
+                    lb.insert("end", "0x%08X  %s  (typed serial)" % (
+                        raw_crc, label))
+
+            items = sorted(names.items(), key=lambda kv: kv[1].lower())
+            for crc, name in items:
+                if exclude is not None and crc in exclude:
+                    continue
+                blob = ("%s %08x" % (name, crc)).lower()
+                if raw_crc is not None:
+                    # hex query: only keep exact serial unless name also matches
+                    if crc != raw_crc and not _tokens_match(q, blob):
+                        continue
+                elif not _tokens_match(q, blob):
+                    continue
+                rows.append((crc, name))
+                lb.insert("end", "0x%08X  %s" % (crc, name))
+
+            n = len(rows)
+            if n == 0:
+                status.config(
+                    text="No matches among %d mapped serials. Clear the "
+                         "search or type a full 0x… serial."
+                         % len(names))
+            else:
+                status.config(
+                    text="%d match%s · double-click or Use selected"
+                         % (n, "" if n == 1 else "es"))
+
+        def pick(_evt=None):
+            sel = lb.curselection()
+            if not sel:
+                return
+            crc, _label = rows[sel[0]]
+            dlg.destroy()
+            try:
+                on_pick(crc)
+            except Exception as ex:
+                messagebox.showerror("Recipe edit failed", str(ex),
+                                     parent=self)
+
+        def name_this_serial():
+            crc = state["raw_crc"]
+            if crc is None or state["raw_mapped"]:
+                return
+            self._name_recipe_serial_dialog(
+                crc, on_named=lambda _c, _n: refresh())
+
+        qvar.trace_add("write", refresh)
+        lb.bind("<Double-1>", pick)
+        entry.bind("<Return>", pick)
+        btns = ttk.Frame(dlg)
+        btns.pack(pady=8)
+        ttk.Button(btns, text="Use selected", command=pick).pack(
+            side="left")
+        name_btn = ttk.Button(btns, text="Name this serial…",
+                              command=name_this_serial, state="disabled")
+        name_btn.pack(side="left", padx=6)
+        refresh()
+
+    def _name_recipe_serial_dialog(self, crc, on_named=None):
+        """Confirm + persist a name for an unmapped recipe-ID serial.
+
+        Search list is built from recipe_item_table_names() (the "Recipe
+        for X" names already in item_table_merged.json) plus a free-text
+        fallback for the rare case the right name isn't in that list.
+        Saved via add_recipe_id_name() so it's remembered next time -
+        recipe serials are a different CRC space from item-table hashes
+        (see RECIPE_ID_NAMES above), so this pairing can only ever be a
+        human confirmation, never an automatic lookup.
+        """
+        crc = int(crc) & 0xFFFFFFFF
+        pool = recipe_item_table_names()
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Name recipe serial 0x%08X" % crc)
+        dlg.geometry("560x440")
+        ttk.Label(
+            dlg,
+            text="0x%08X isn't mapped yet. Pick the matching \"Recipe "
+                 "for X\" name below (%d known from item_table_merged."
+                 "json), or type it if it's not in the list. Saved to "
+                 "%s so it's remembered next time."
+                 % (crc, len(pool), RECIPE_ID_NAMES_FILE),
+            wraplength=520, justify="left",
+        ).pack(anchor="w", padx=8, pady=6)
+
+        qvar = tk.StringVar()
+        entry = ttk.Entry(dlg, textvariable=qvar)
+        entry.pack(fill="x", padx=8, pady=4)
+        entry.focus_set()
+        status = ttk.Label(dlg, text="", foreground="#555")
+        status.pack(anchor="w", padx=8)
+        lb = tk.Listbox(dlg, font=("Courier New", 9))
+        lb.pack(fill="both", expand=True, padx=8, pady=4)
+        rows = []  # names currently listed
+
+        def refresh(*_a):
+            lb.delete(0, "end")
+            del rows[:]
+            q = (qvar.get() or "").strip().lower()
+            for name in pool:
+                if q and q not in name.lower():
+                    continue
+                rows.append(name)
+                lb.insert("end", name)
+            status.config(
+                text="%d match%s · double-click / Use selected, or type "
+                     "an exact name and Confirm typed name"
+                     % (len(rows), "" if len(rows) == 1 else "es"))
+
+        def confirm(name):
+            name = (name or "").strip()
+            if not name:
+                messagebox.showinfo("No name", "Type or pick a name first.",
+                                    parent=dlg)
+                return
+            try:
+                add_recipe_id_name(crc, name, log_fn=self.app.log)
+            except Exception as ex:
+                messagebox.showerror("Save failed", str(ex), parent=dlg)
+                return
+            dlg.destroy()
+            if on_named:
+                try:
+                    on_named(crc, name)
+                except Exception:
+                    pass
+
+        def use_selected(_evt=None):
+            sel = lb.curselection()
+            if not sel:
+                return
+            confirm(rows[sel[0]])
+
+        qvar.trace_add("write", refresh)
+        lb.bind("<Double-1>", use_selected)
+        btns = ttk.Frame(dlg)
+        btns.pack(fill="x", padx=8, pady=8)
+        ttk.Button(btns, text="Use selected", command=use_selected).pack(
+            side="left")
+        ttk.Button(btns, text="Confirm typed name",
+                   command=lambda: confirm(qvar.get())).pack(
+            side="left", padx=6)
+        refresh()
 
     def _build_quests_tab(self):
         parent = self._tab_quests
