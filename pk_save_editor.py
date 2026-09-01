@@ -386,11 +386,100 @@ _BUILTIN_NPC_TEMPLATES = {}
 _BUILTIN_WORLD_TEMPLATES = {
     0xF0653E24: "Sign",
     0x0BCB9932: "Landing Pad",
+    # Placeable "block" props (entity mesh, not BKCK voxel id)
+    0x0E8731F4: "Sunstone Block",
+    0x6890383A: "Moonstone Block",
+    0xEF57979B: "Electro Core Block",
+    0xE9C11116: "Asteroid Core Block",
+}
+
+# TemplateCRC → map color for block-like props (drawn as terrain-colored tiles)
+BLOCK_PROP_COLORS = {
+    0x0E8731F4: "#FFFF2F",  # sunstone
+    0x6890383A: "#40FFFF",  # moonstone
+    0xEF57979B: "#57FFFF",  # electro core
+    0xE9C11116: "#FF41FF",  # asteroid core
 }
 
 _BUILTIN_ENEMY_CRCS = set()
 
 TEMPLATE_JSON_FILE = "pk_templates.json"
+
+# Optional TemplateCRC -> internal prop name dictionary, extracted from
+# core_game_small.kfc_dir's furniture/prop entries (see format doc §16/§22
+# on why TemplateCRC has no shipped name dictionary otherwise). This is a
+# completely different CRC namespace from item_table_merged.json's item
+# hashes - confirmed by zero overlap on an 808-entry sample - so it's
+# additive, not a replacement for the item table. Loaded once, merged into
+# WORLD_TEMPLATES as a layer *under* pk_templates.json, so a user's own
+# rename via the Templates UI always wins on conflict.
+FURNITURE_CATALOG_FILE = "pk_furniture_catalog.json"
+
+_FURNITURE_CATALOG_CACHE = None
+
+
+def _prettify_prop_name(raw_names):
+    """'prop_furniture_flag_hollowknights' -> 'Furniture Flag Hollowknights'.
+
+    Drops a leading prop_/deco_ category tag (redundant with the fact
+    it's in this dictionary at all) and title-cases what's left. This is
+    a mechanical cleanup of an internal asset name, not a curated
+    display name - good enough to beat a raw hex CRC, not meant to be
+    perfect (numbers/suffixes like "04"/"noinventory" stay attached).
+    """
+    if not raw_names:
+        return None
+    name = raw_names[0]
+    parts = name.split("_")
+    if len(parts) > 1 and parts[0] in ("prop", "deco"):
+        parts = parts[1:]
+    pretty = " ".join(p.capitalize() for p in parts if p)
+    return pretty or name
+
+
+def _load_furniture_catalog_templates():
+    """crc -> display name from pk_furniture_catalog.json, if present.
+
+    Resolves its own path inline (same pattern as _template_json_path)
+    rather than calling _here() - this function runs at import time via
+    _reload_template_maps(), before _here() is defined later in this
+    file. Calling it here previously raised NameError, which the
+    surrounding try/except at import time silently swallowed - breaking
+    not just this furniture lookup but the *entire* initial template
+    load, including the user's own pk_templates.json. Worth remembering
+    next time something new gets called from this early init path.
+    """
+    global _FURNITURE_CATALOG_CACHE
+    if _FURNITURE_CATALOG_CACHE is not None:
+        return _FURNITURE_CATALOG_CACHE
+    out = {}
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         FURNITURE_CATALOG_FILE)
+    if os.path.isfile(path):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            entries = data.get("entries") if isinstance(data, dict) else data
+            for rec in entries or []:
+                tcrc = rec.get("template_crc")
+                if not tcrc:
+                    continue
+                try:
+                    crc = int(tcrc, 0) & 0xFFFFFFFF
+                except (TypeError, ValueError):
+                    continue
+                pretty = _prettify_prop_name(rec.get("names"))
+                if pretty:
+                    out[crc] = pretty
+        except Exception:
+            out = {}
+    _FURNITURE_CATALOG_CACHE = out
+    return out
+
+
+def _invalidate_furniture_catalog_cache():
+    global _FURNITURE_CATALOG_CACHE
+    _FURNITURE_CATALOG_CACHE = None
 
 # Live merged maps (builtins + user JSON). Mutated by load/save helpers.
 NPC_TEMPLATES = dict(_BUILTIN_NPC_TEMPLATES)
@@ -414,7 +503,15 @@ def _reload_template_maps():
     global NPC_TEMPLATES, WORLD_TEMPLATES, ENEMY_TEMPLATE_CRCS
     global TRADER_TEMPLATE_CRCS, _USER_TEMPLATE_META
     NPC_TEMPLATES = dict(_BUILTIN_NPC_TEMPLATES)
-    WORLD_TEMPLATES = dict(_BUILTIN_WORLD_TEMPLATES)
+    # Furniture/prop TemplateCRC dictionary, if the file's present, as
+    # the base layer - then the hand-curated builtins on top, since a
+    # curated name ("Sign") beats a mechanically-derived one
+    # ("Signpost Editable") for the same CRC when both exist (confirmed
+    # this collision is real, not hypothetical, for both current
+    # builtin entries). pk_templates.json is applied further below and
+    # wins over everything, since that's the user's own explicit choice.
+    WORLD_TEMPLATES = dict(_load_furniture_catalog_templates())
+    WORLD_TEMPLATES.update(_BUILTIN_WORLD_TEMPLATES)
     ENEMY_TEMPLATE_CRCS = set(_BUILTIN_ENEMY_CRCS)
     _USER_TEMPLATE_META = {}
     path = _template_json_path()
@@ -480,6 +577,12 @@ def _reload_template_maps():
             ENEMY_TEMPLATE_CRCS.add(crc)
         else:
             WORLD_TEMPLATES[crc] = str(name)
+            # Spawners are stored as kind=world but should still count as
+            # enemies for map colouring / filters.
+            low = str(name).lower()
+            if (crc == 0x4AF2B7C8 or "spawner" in low
+                    or low.startswith("enemy")):
+                ENEMY_TEMPLATE_CRCS.add(crc)
     TRADER_TEMPLATE_CRCS = {
         crc for crc, name in NPC_TEMPLATES.items()
         if "(trader)" in name.lower() or
@@ -2088,6 +2191,73 @@ def _entity_template_crc(entity_node):
     return None
 
 
+def _entity_induced_template(entity_node):
+    """InducedSpawnTemplate value (the actual spawned enemy group), if present.
+    Spawner entities (TemplateCRC 0x4AF2B7C8) store the enemy type here -
+    e.g. 0x56A5537D = green slime group, 0x8E6D2E6A = orange slime group."""
+    if not entity_node or not entity_node.get("children"):
+        return None
+    for ch in entity_node["children"]:
+        if ch["key"] == "InducedSpawnTemplate" and ch.get("value") is not None:
+            return int(ch["value"]) & 0xFFFFFFFF
+    return None
+
+
+def _strip_spawn_group(name):
+    """'Green Slime (spawn group)' -> 'Green Slime'; '(spawn)' -> ''."""
+    s = str(name).strip()
+    for suf in (" (spawn group)", "(spawn group)", " (spawn)", "(spawn)"):
+        if s.endswith(suf):
+            return s[: -len(suf)].rstrip()
+    return s
+
+
+def _is_enemy_map_marker(tcrc, entity_info=None, label=None):
+    """True for enemies AND enemy spawners (red dots on the map).
+
+    Covers: ENEMY_TEMPLATE_CRCS, InducedSpawnTemplate, the known Enemy
+    Spawner CRC 0x4AF2B7C8, and display names that start with enemy/spawner.
+    """
+    if tcrc is not None:
+        tc = int(tcrc) & 0xFFFFFFFF
+        if tc in ENEMY_TEMPLATE_CRCS or tc == 0x4AF2B7C8:
+            return True
+    if entity_info is not None and entity_info.get("induced") is not None:
+        return True
+    name = (label or "")
+    if not name and tcrc is not None:
+        name = template_label(int(tcrc) & 0xFFFFFFFF) or ""
+    low = name.lower()
+    if low.startswith("enemy") or "spawner" in low or "(spawn)" in low:
+        return True
+    return False
+
+
+def _entity_display_name(entity_node, template_crc=None):
+    """Best display name for an entity.
+
+    * Enemy Spawner entities (TemplateCRC 0x4AF2B7C8) get a combined label:
+      'Enemy Spawner (Green Slime)' using their InducedSpawnTemplate name.
+    * Any other entity with an InducedSpawnTemplate shows that entry's name
+      (the enemy it spawns), so 'Slime Silmey' style internals never leak.
+    * Otherwise the TemplateCRC name from pk_templates.json.
+    """
+    if template_crc is None:
+        template_crc = _entity_template_crc(entity_node)
+    ind = _entity_induced_template(entity_node)
+    base = template_label(template_crc) if template_crc is not None else None
+    if ind is not None:
+        nm = template_label(ind)
+        if nm and not nm.startswith("0x"):
+            clean = _strip_spawn_group(nm)
+            if base and (template_crc == 0x4AF2B7C8
+                         or base.lower().startswith("enemy spawner")
+                         or base.lower().startswith("spawner ")):
+                return "%s (%s)" % (base, clean)
+            return clean
+    return base or "?"
+
+
 def iter_entities(nodes):
     """Yield Entity document nodes under any EntityArray."""
     for n in _walk(nodes):
@@ -2244,12 +2414,14 @@ def extract_world_all_templates(nodes):
     out = []
     for ent in iter_entities(nodes):
         tmpl = _entity_template_crc(ent)
-        if tmpl is None:
+        induced = _entity_induced_template(ent)
+        if tmpl is None and induced is None:
             continue
         out.append({
             "entity": ent,
             "pos": _entity_position(ent),
-            "template": int(tmpl) & 0xFFFFFFFF,
+            "template": int(tmpl) & 0xFFFFFFFF if tmpl is not None else None,
+            "induced": int(induced) & 0xFFFFFFFF if induced is not None else None,
         })
     return out
 
@@ -2590,33 +2762,48 @@ def chunk_id_to_grid_linear(cid):
 
 
 def chunk_id_to_grid_bitfield(cid):
-    """Sparse ids (e.g. 0,1,4,5,8,9,12,13,32,…) → packed 4×4 disc.
+    """Sparse / creative chunk ids → packed XZ cell.
 
-    Bits 0+3 → gx, bits 2+5 → gz. Verified on flat creative islands
-    where BKCK only exists on this sparse set: linear %8 leaves gaps;
-    bit-field packs them into a continuous island.
+    Low 6 bits hold the classic bit-field XZ (bits 0+3 → gx, 2+5 → gz).
+    Higher bits are extra vertical / sub-chunk layers used when builds grow
+    tall — they must NOT expand world X/Z or the map blows up to thousands
+    of units (entry ids like 2572). Always mask to low 6 for XZ.
     """
-    ci = int(cid)
+    ci = int(cid) & 63
     gx = (ci & 1) | (((ci >> 3) & 1) << 1)
     gz = ((ci >> 2) & 1) | (((ci >> 5) & 1) << 1)
     return gx, gz
 
 
 def chunk_ids_are_sparse_bitfield(ids):
-    """True when every id maps to a unique bit-field cell (no collisions)."""
-    cells = set()
+    """True when ids look like the sparse bit-field packing (creative/superflat).
+
+    Classic set is 0,1,4,5,8,9,12,13,32,… High ids (64+) are the same XZ
+    cells with extra vertical layers — mask to low 6 before testing.
+    """
+    int_ids = []
     for i in ids:
         try:
-            ci = int(i)
+            ci = int(i) & 63
         except (TypeError, ValueError):
             return False
-        if not (0 <= ci < 64):
-            return False
-        cell = chunk_id_to_grid_bitfield(ci)
-        if cell in cells:
-            return False
-        cells.add(cell)
-    return len(cells) == len(ids) and len(ids) > 0
+        int_ids.append(ci)
+    if not int_ids:
+        return False
+    # Compare uniqueness on the masked XZ set
+    cells = {chunk_id_to_grid_bitfield(ci) for ci in int_ids}
+    unique_ids = set(int_ids)
+    if len(cells) == len(unique_ids):
+        return True
+    span = max(unique_ids) + 1
+    density = len(unique_ids) / float(span)
+    unique_ratio = len(cells) / float(len(unique_ids))
+    if density <= 0.55 and unique_ratio >= 0.7 and len(unique_ids) >= 8:
+        return True
+    # Creative builds with many vertical-layer duplicates still prefer bitfield
+    if len(unique_ids) >= 8 and unique_ratio >= 0.5:
+        return True
+    return False
 
 
 def chunk_id_to_grid(cid):
@@ -2635,7 +2822,32 @@ def local_to_world_xz(ox, oz, lx, lz, swap_axes=False):
     return (ox + lx, oz + lz)
 
 
+def world_to_local_xz(wx, wz, ox, oz, swap_axes=False):
+    """Inverse of local_to_world_xz → integer local (lx, lz)."""
+    if swap_axes:
+        lz = int(round(wx - ox))
+        lx = int(round(wz - oz))
+    else:
+        lx = int(round(wx - ox))
+        lz = int(round(wz - oz))
+    return lx, lz
 
+
+def find_chunk_for_world_xz(wx, wz, terrain_origin, swap_axes=False):
+    """Return (chunk_id, ox, oz, lx, lz) covering world (wx,wz), or None."""
+    ix = int(round(wx))
+    iz = int(round(wz))
+    for cid, (ox, oz) in terrain_origin.items():
+        lx, lz = world_to_local_xz(ix, iz, ox, oz, swap_axes)
+        if 0 <= lx < 32 and 0 <= lz < 32:
+            return cid, ox, oz, lx, lz
+    return None
+
+
+
+# Voxel id → display name. Creative sample lines on either side of the pad:
+#   RIGHT of pad (X toward pad): stone / brick / hard-stone row
+#   LEFT  of pad (X away from pad): celestial / crystal / carpet / concrete
 KNOWN_VOXEL_BLOCKS = {
     0: "air",
     1: "dirt",
@@ -2652,12 +2864,120 @@ KNOWN_VOXEL_BLOCKS = {
     50: "straw",
     51: "snowblock",
     244: "pad-detail",
-    251: "landing-pad",  # surface; 16 cells = 4x4x1
+    251: "landing-pad",
     252: "pad-extra?",
+    254: "unknown-254",
+    255: "water",
 }
-# Block line under Edna (L→R): soil,sand,straw,wood,polished wood,parquet,
-# dark parquet,polished dark wood,polished gray wood,polished bamboo,coal,snow
-# matched by reverse index order (coal=10 & snow=51 at end).
+
+# RIGHT of pad — stone line (X ascending toward pad)
+_BLOCK_ROW_RIGHT = [
+    (56,  "stone",                          "#8F8F93"),
+    (28,  "large faynore stone",            "#67B7D4"),
+    (113, "large white stone bricks",       "#FCF9F5"),
+    (103, "large stone bricks",             "#FFDA9F"),
+    (112, "small stone bricks",             "#8E8887"),
+    (102, "small bright stone bricks",      "#B0B3B8"),
+    (111, "basalt stone",                   "#435455"),
+    (101, "obsidian stone",                 "#4B6085"),
+    (110, "polished obsidian",              "#7186AA"),
+    (100, "celestial stone",                "#5D89B9"),
+    (109, "stone bricks",                   "#D7DCDA"),
+    (99,  "red stone bricks",               "#AE5342"),
+    (35,  "dark stone bricks",              "#595045"),
+    (34,  "yellow stone bricks",            "#FFF8CA"),
+    (37,  "ruinstone",                      "#8D8C87"),
+    (36,  "studded ruinstone",              "#5D6063"),
+    (68,  "marble",                         "#FCFFFF"),
+    (64,  "polished marble",                "#FFFFA0"),
+    (31,  "raw jade stone",                 "#41A453"),
+    (29,  "polished jade stone",            "#83BF93"),
+    (33,  "grey hard stone",                "#938E8C"),
+    (32,  "polished grey hard stone",       "#59595E"),
+    (47,  "dark hard stone",                "#2E2924"),
+    (46,  "polished dark hard stone",       "#2B2722"),
+    (45,  "light grey hard stone",          "#EFEDF0"),
+    (43,  "polished light grey hard stone", "#E4E2E6"),
+    (40,  "yellow hard stone",              "#C4AE73"),
+    (39,  "polished yellow hard stone",     "#B7A169"),
+    (30,  "red hard stone",                 "#683F33"),
+    (38,  "polished red hard stone",        "#683F33"),
+    (42,  "rooftile",                       "#A25438"),
+    (41,  "green rooftile",                 "#345136"),
+]
+
+# LEFT of pad — crystal / carpet / concrete (X ascending away from pad).
+# 27 placed; remaining concretes ran out of island space.
+_BLOCK_ROW_LEFT = [
+    (48,  "polished celestial",             "#699FFB"),
+    (57,  "blue rooftile",                  "#345A80"),
+    (27,  "dark rooftile",                  "#5A5B5E"),
+    # Colored ruinstones (probe-confirmed from 2×2 in orange column):
+    #   top-left=76 green, top-right=77 pink,
+    #   bot-left=78 blue,  bot-right=79 purple
+    (76,  "green ruinstone",                "#2EE66A"),
+    (77,  "pink ruinstone",                 "#E050FF"),
+    (78,  "blue ruinstone",                 "#3DB8FF"),
+    (79,  "purple ruinstone",               "#6B4CFF"),
+    (80,  "orange ruinstone",               "#FFFF18"),
+    (81,  "red ruinstone",                  "#FF0000"),
+    (62,  "sunstone",                       "#FFFF2F"),
+    (75,  "moonstone",                      "#40FFFF"),
+    (70,  "electro core",                   "#57FFFF"),
+    (73,  "asteroid core",                  "#FF41FF"),
+    (71,  "glowing sandstone",              "#FFB04F"),
+    (74,  "purple crystal",                 "#FF3DFF"),
+    (72,  "dark blue crystal",              "#323AD0"),
+    (3,   "light blue crystal",             "#5ED2E5"),
+    (4,   "green crystal",                  "#36BA5F"),
+    (5,   "yellow crystal",                 "#FFFF8C"),
+    (6,   "red crystal",                    "#FF2A19"),
+    (53,  "copper-plate",                   "#F7CBA6"),
+    (54,  "iron-plate",                     "#D3FFFF"),
+    (55,  "gold-plate",                     "#FFFF85"),
+    (52,  "titanium-plate",                 "#FFFFFF"),
+    (26,  "blue carpet",                    "#6F82FC"),
+    (21,  "green carpet",                   "#54AB59"),
+    (23,  "gold carpet",                    "#B29E52"),
+    (22,  "red carpet",                     "#630C09"),
+    (24,  "grey concrete",                  "#EEE0CA"),
+    (25,  "white concrete",                 "#F0F3FA"),
+    (20,  "orange concrete",                "#C4A37C"),
+]
+
+BLOCK_COLORS = {
+    0: "#1a1a22",
+    1: "#254D23",   # dirt
+    2: "#98644B",   # soil
+    7: "#83533A",   # dark parquet
+    8: "#FFE1BE",   # parquet
+    10: "#5E6165",  # coal
+    13: "#96969C",  # polished gray wood
+    14: "#504843",  # polished dark wood
+    15: "#B18E6C",  # polished wood
+    16: "#E5D2A3",  # wood
+    18: "#FED586",  # polished bamboo
+    49: "#F4C478",  # sand
+    50: "#FFDA7B",  # straw
+    51: "#FFFFFF",  # snowblock
+    244: "#3D5A80",
+    251: "#5B8DEF",
+    252: "#7CB342",
+    254: "#888888",
+    255: "#16578F", # water
+}
+for _id, _name, _col in _BLOCK_ROW_RIGHT + _BLOCK_ROW_LEFT:
+    KNOWN_VOXEL_BLOCKS[int(_id)] = _name
+    BLOCK_COLORS[int(_id)] = _col
+# Listed but not placed on the sample island (no confirmed ids yet)
+for _id, _name, _col in (
+    (58, "red concrete", "#A50505"),
+    (59, "green concrete", "#BAE9C5"),
+    (60, "blue concrete", "#A3D7FF"),
+    (61, "deep blue concrete", "#0B85FF"),
+):
+    KNOWN_VOXEL_BLOCKS.setdefault(_id, _name)
+    BLOCK_COLORS.setdefault(_id, _col)
 
 
 def count_inventory_entities_in_doc(doc):
@@ -4644,13 +4964,25 @@ def extract_cipi_islands(doc):
                     pass
             elif k == "islandName" and ch.get("children"):
                 for sub in ch["children"]:
-                    if sub.get("key") == "name":
-                        val = sub.get("value")
-                        if isinstance(val, (bytes, bytearray)):
-                            name = val.split(b"\x00")[0].decode(
-                                "utf-8", "replace").strip()
-                        elif isinstance(val, str):
-                            name = val.strip()
+                    if sub.get("key") != "name":
+                        continue
+                    val = sub.get("value")
+                    if isinstance(val, (bytes, bytearray)):
+                        # Binary (0x05) is common — 64-byte padded name
+                        name = val.split(b"\x00")[0].decode(
+                            "utf-8", "replace").strip()
+                    elif isinstance(val, str):
+                        name = val.split("\x00")[0].strip()
+                    # Some builds nest another {name: …} layer
+                    if not name and sub.get("children"):
+                        for sub2 in sub["children"]:
+                            if sub2.get("key") == "name":
+                                v2 = sub2.get("value")
+                                if isinstance(v2, (bytes, bytearray)):
+                                    name = v2.split(b"\x00")[0].decode(
+                                        "utf-8", "replace").strip()
+                                elif isinstance(v2, str):
+                                    name = v2.split("\x00")[0].strip()
         return iid, name, template, theme
 
     # Walk cluster → islands arrays
@@ -4690,6 +5022,103 @@ def extract_cipi_islands(doc):
                     "location": loc,
                 })
     return out
+
+
+def resolve_world_display_name(info, universe_meta=None, dctx=None,
+                               save_rows=None):
+    """Best label for a world: CIPI custom name for Creative, else story loc.
+
+    Creative world files still carry story location codes in the filename
+    (e.g. 0xA0B → Tomb Of C'Thiris), but the player-visible name is
+    CIPI.islandName on the parent universe (e.g. 'canyoufindthis' or
+    'Blueprint'). Returns e.g. 'canyoufindthis [Creative]'.
+    """
+    loc = info.get("location") if info else None
+    story = (info.get("location_name") if info else None) or None
+    uslot = info.get("universe") if info else None
+    umeta = None
+    if universe_meta and uslot is not None:
+        umeta = universe_meta.get(uslot)
+    # Lazy-load universe meta when caller has saves + dctx but no cache yet
+    if umeta is None and dctx is not None and save_rows and uslot is not None:
+        for row in save_rows:
+            ui = row[4]
+            if ui.get("type") != "universe" or ui.get("universe") != uslot:
+                continue
+            if ui.get("community") and info.get("community"):
+                pass  # allow
+            elif ui.get("community") != info.get("community"):
+                continue
+            try:
+                uc = load_container(row[3])
+            except Exception:
+                continue
+            gameplay_mode = None
+            cipi_by_loc = {}
+            for e in uc.entries:
+                if e.get("tag") == b"USHD":
+                    try:
+                        doc, _ = unwrap(uc.chunk(e), dctx)
+                        gameplay_mode = extract_universe_gameplay_mode(doc)
+                    except Exception:
+                        pass
+                elif e.get("tag") == b"CIPI":
+                    try:
+                        doc, _ = unwrap(uc.chunk(e), dctx)
+                        for isl in extract_cipi_islands(doc):
+                            lc = isl.get("location")
+                            if lc is not None:
+                                cipi_by_loc[lc] = isl
+                    except Exception:
+                        pass
+            umeta = {"gameplay_mode": gameplay_mode, "cipi": cipi_by_loc,
+                     "path": row[3]}
+            if universe_meta is not None:
+                universe_meta[uslot] = umeta
+            break
+    if umeta and umeta.get("gameplay_mode") == "Creative":
+        cipi_map = umeta.get("cipi") or {}
+        cipi = cipi_map.get(loc) or {}
+        # Fuzzy match when exact location key differs (cluster packing)
+        if loc is not None and not (cipi.get("name") or "").strip():
+            candidates = []
+            for k, v in cipi_map.items():
+                if k is None:
+                    continue
+                score = 0
+                if k == loc:
+                    score = 100
+                elif (k & 0xFFF) == (loc & 0xFFF):
+                    score = 80
+                elif (k & 0xFF) == (loc & 0xFF):
+                    score = 40
+                elif (v.get("islandId") is not None
+                      and (v.get("islandId") & 0xFF) == (loc & 0xFF)):
+                    score = 30
+                if score:
+                    # Prefer entries that actually have a player name
+                    if (v.get("name") or "").strip():
+                        score += 50
+                    candidates.append((score, v))
+            if candidates:
+                candidates.sort(key=lambda t: -t[0])
+                cipi = candidates[0][1]
+        name = (cipi.get("name") or "").strip()
+        if name:
+            return "%s [Creative]" % name
+        # templateId like Homeland/CreativeB is a slot class, not the
+        # player-facing title — only use as last resort.
+        tmpl = (cipi.get("templateId") or "").strip()
+        if tmpl and tmpl.lower() not in ("homeland",):
+            return "%s [Creative]" % tmpl
+        if loc is not None:
+            return "Blueprint [Creative] (0x%X)" % loc
+        return "Blueprint [Creative]"
+    if story:
+        return story
+    if loc is not None:
+        return "0x%X" % loc
+    return info.get("label") if info else "World"
 
 
 def island_location_from_entry_id(entry_id):
@@ -5380,6 +5809,9 @@ class App(tk.Tk):
         self.world_map_btn = ttk.Button(
             world_actions2, text="Map…", command=self.open_world_map)
         self.world_map_btn.pack(side="left", padx=4)
+        self.world_3d_btn = ttk.Button(
+            world_actions2, text="3D…", command=self.open_world_3d_preview)
+        self.world_3d_btn.pack(side="left", padx=4)
         self.world_voxels_btn = ttk.Button(
             world_actions2, text="Terrain / voxels…",
             command=self.open_world_voxels)
@@ -5393,6 +5825,10 @@ class App(tk.Tk):
         ttk.Button(
             world_actions3, text="Refresh data…",
             command=lambda: self._ensure_github_data(force=True),
+        ).pack(side="left", padx=4)
+        ttk.Button(
+            world_actions3, text="Strip to pad…",
+            command=self.strip_world_to_landing_pad,
         ).pack(side="left", padx=4)
         ttk.Label(
             world_actions3,
@@ -5511,6 +5947,10 @@ class App(tk.Tk):
             self.log("Item table: not loaded (%s)" % ex)
         self._apply_save_filter()
         self.save_combo.bind("<<ComboboxSelected>>", self._on_save_selected)
+        # Load the zstd dict now (silently) so universe/world names resolve
+        # on first paint below, instead of showing "(need dict)" until
+        # some unrelated action happens to trigger _ensure_dict() first.
+        self._ensure_dict(silent=True)
         # Populate universe / world overview lists
         self.refresh_universe_list(quick=True)
         self.refresh_world_list(quick=True)
@@ -5911,13 +6351,14 @@ class App(tk.Tk):
         return
 
 
-    def _ensure_dict(self):
+    def _ensure_dict(self, silent=False):
         dictpath = self.dictfile_path.get()
         if not dictpath or not os.path.isfile(dictpath):
-            messagebox.showerror(
-                "No dictionary",
-                "Pick pk_dict.bin first (the 262144-byte file extracted "
-                "from the game exe).")
+            if not silent:
+                messagebox.showerror(
+                    "No dictionary",
+                    "Pick pk_dict.bin first (the 262144-byte file extracted "
+                    "from the game exe).")
             return False
         if self.dctx is not None and self.cctx is not None:
             return True
@@ -5925,13 +6366,19 @@ class App(tk.Tk):
             self.dctx, self.cctx = load_dict(dictpath)
             return True
         except ImportError:
-            messagebox.showerror(
-                "Missing package",
-                "The 'zstandard' package isn't installed.\n\n"
-                "Run:  pip install zstandard")
+            if not silent:
+                messagebox.showerror(
+                    "Missing package",
+                    "The 'zstandard' package isn't installed.\n\n"
+                    "Run:  pip install zstandard")
+            else:
+                self.log("Dict not loaded yet: zstandard package missing")
             return False
         except Exception as exc:
-            messagebox.showerror("Dictionary error", str(exc))
+            if not silent:
+                messagebox.showerror("Dictionary error", str(exc))
+            else:
+                self.log("Dict not loaded yet: %s" % exc)
             return False
 
     def load_selected(self):
@@ -5975,6 +6422,12 @@ class App(tk.Tk):
 
     def refresh_universe_list(self, quick=False):
         """Fill the Universes tab from discovered 03… files."""
+        # Opportunistic, silent: if the dict wasn't loaded yet (e.g. this
+        # is the very first call, before anything else triggered
+        # _ensure_dict()), try now so names resolve immediately instead
+        # of showing "(need dict)" until a manual refresh.
+        if self.dctx is None:
+            self._ensure_dict(silent=True)
         for row in self.univ_tree.get_children():
             self.univ_tree.delete(row)
         self._univ_rows = {}
@@ -6284,6 +6737,9 @@ class App(tk.Tk):
         are only filled when quick=False (after Load / Refresh with dict).
         When _world_universe_filter is set, only that universe's worlds show.
         """
+        # Same opportunistic, silent dict load as refresh_universe_list.
+        if self.dctx is None:
+            self._ensure_dict(silent=True)
         for row in self.world_tree.get_children():
             self.world_tree.delete(row)
         self._world_rows = {}
@@ -6349,16 +6805,14 @@ class App(tk.Tk):
             loc_s = ("%X" % loc) if loc is not None else "?"
             # Prefer cached custom name from a previous Open / scan
             meta = getattr(self, "_world_meta", {}).get(full) or {}
-            base_name = info.get("location_name") or "(unknown)"
-            # Creative universe: use CIPI name instead of story location
-            umeta = getattr(self, "_universe_meta", {}).get(
-                info.get("universe")) or {}
-            if umeta.get("gameplay_mode") == "Creative":
-                cipi = (umeta.get("cipi") or {}).get(loc) or {}
-                if cipi.get("name"):
-                    base_name = "%s [Creative]" % cipi["name"]
-                else:
-                    base_name = "Creative 0x%s" % loc_s
+            if not hasattr(self, "_universe_meta"):
+                self._universe_meta = {}
+            base_name = resolve_world_display_name(
+                info,
+                universe_meta=self._universe_meta,
+                dctx=self.dctx,
+                save_rows=getattr(self, "_all_saves", None),
+            )
             if meta.get("display_name"):
                 display_name = meta["display_name"]
             else:
@@ -6696,6 +7150,235 @@ class App(tk.Tk):
             self._update_file_info_label()
             self.load_world_file(path)
 
+    def strip_world_to_landing_pad(self):
+        """TEST tool: wipe all blocks + props, keep only the landing pad entity.
+
+        - Zeros BKCK voxelData (dirt, water, pad surface, …)
+        - Removes every non–landing-pad entity
+        - Drops empty BKCK chunks from the container (no pad left)
+        - Drops ALL FLCK (fluid columns) and ILAS (analysis blobs)
+          — these are ~95% of a built-up creative world's size
+        - Writes once with a rolling .bak backup
+
+        Landing pad entity is enough to place blocks again in-game.
+        """
+        path, info = self._resolve_world_path()
+        if not path:
+            messagebox.showinfo(
+                "No world",
+                "Select a world in the Worlds tab first.")
+            return
+        if not self._ensure_dict():
+            return
+        if not messagebox.askyesno(
+                "Strip world to landing pad?",
+                "This will permanently clear ALL blocks, water, and props "
+                "on:\n\n%s\n\n"
+                "Also removes fluid chunks (FLCK) and analysis blobs (ILAS) "
+                "so the file can shrink toward a fresh creative size.\n\n"
+                "Only the landing-pad entity is kept. A .bak backup is "
+                "written first.\n\nContinue?" % os.path.basename(path),
+                parent=self):
+            return
+        try:
+            container = load_container(path)
+        except Exception as ex:
+            messagebox.showerror("Load failed", str(ex))
+            return
+        self.container = container
+        self.savefile_path.set(path)
+
+        pad_crcs = landing_pad_template_crcs()
+        n_vox_cleared = 0
+        n_ents_removed = 0
+        n_pads_kept = 0
+        n_bkck_kept = 0
+        n_bkck_dropped = 0
+        n_flck_dropped = 0
+        n_ilas_dropped = 0
+        n_other_kept = 0
+        new_entries = []
+        size_before = 0
+        try:
+            size_before = os.path.getsize(path)
+        except OSError:
+            pass
+
+        for e in container.entries:
+            raw = container.chunk(e)
+            tag = e.get("tag")
+
+            # Drop fluid + analysis entirely (main size of built worlds)
+            if tag == b"FLCK":
+                n_flck_dropped += 1
+                continue
+            if tag == b"ILAS":
+                n_ilas_dropped += 1
+                continue
+
+            if tag != b"BKCK":
+                new_entries.append((e["id"], tag, raw))
+                n_other_kept += 1
+                continue
+
+            try:
+                doc, kind = unwrap(raw, self.dctx)
+            except Exception as ex:
+                self.log("  strip: skip BKCK id=%s unwrap: %s" % (e.get("id"), ex))
+                new_entries.append((e["id"], tag, raw))
+                n_bkck_kept += 1
+                continue
+            if not doc or kind is None:
+                n_bkck_dropped += 1
+                continue
+            buf = bytearray(doc)
+            try:
+                nodes, _ = bson_parse(buf)
+            except Exception as ex:
+                self.log("  strip: skip BKCK id=%s parse: %s" % (e.get("id"), ex))
+                new_entries.append((e["id"], tag, raw))
+                n_bkck_kept += 1
+                continue
+
+            # --- zero voxelData ---
+            for n in _walk(nodes):
+                if n.get("key") != "voxelData" or n.get("type") != 0x05:
+                    continue
+                val = n.get("value")
+                if not isinstance(val, (bytes, bytearray)) or not val:
+                    continue
+                nz = sum(1 for b in val if b)
+                if nz:
+                    try:
+                        bson_patch(buf, n, bytes(len(val)))
+                        n_vox_cleared += nz
+                    except Exception as ex:
+                        self.log("  strip: voxelData patch failed: %s" % ex)
+                break
+
+            try:
+                nodes, _ = bson_parse(buf)
+            except Exception:
+                new_entries.append((e["id"], tag,
+                                    wrap(bytes(buf), kind, self.cctx)))
+                n_bkck_kept += 1
+                continue
+
+            # --- remove non-pad entities (high estart first) ---
+            pads_here = 0
+            for n in _walk(nodes):
+                if n.get("key") != "EntityArray" or not n.get("children"):
+                    continue
+                keep = []
+                drop = []
+                for ch in n["children"]:
+                    ent = ch
+                    if ch.get("children"):
+                        for sub in ch["children"]:
+                            if sub.get("key") == "Entity":
+                                ent = sub
+                                break
+                    is_pad = False
+                    for wn in _walk([ent]):
+                        if wn.get("key") == "Server LandingPad Component":
+                            is_pad = True
+                            break
+                    if not is_pad:
+                        tcrc = _entity_template_crc(ent)
+                        if (tcrc is not None
+                                and (int(tcrc) & 0xFFFFFFFF) in pad_crcs):
+                            is_pad = True
+                    if is_pad:
+                        keep.append(ch)
+                    else:
+                        drop.append(ch)
+                drop.sort(key=lambda c: c.get("estart") or 0, reverse=True)
+                for ch in drop:
+                    try:
+                        bson_remove_element(buf, n, ch)
+                        n_ents_removed += 1
+                    except Exception as ex:
+                        self.log("  strip: remove entity failed: %s" % ex)
+                pads_here = len(keep)
+                n_pads_kept += pads_here
+                break
+
+            # Drop BKCK that has no pad left (empty air chunk)
+            if pads_here == 0:
+                n_bkck_dropped += 1
+                continue
+
+            try:
+                payload = wrap(bytes(buf), kind, self.cctx)
+            except Exception as ex:
+                self.log("  strip: re-wrap failed id=%s: %s" % (e.get("id"), ex))
+                new_entries.append((e["id"], tag, raw))
+                n_bkck_kept += 1
+                continue
+            new_entries.append((e["id"], tag, payload))
+            n_bkck_kept += 1
+
+        if n_pads_kept == 0:
+            messagebox.showerror(
+                "No landing pad",
+                "No landing-pad entity found — refusing to write an empty "
+                "world. File unchanged.")
+            return
+
+        out = rebuild_container(new_entries)
+        try:
+            max_bak = 5
+            for i in range(max_bak - 1, 0, -1):
+                src = path + (".bak" if i == 1 else (".bak.%d" % (i - 1)))
+                dst = path + (".bak.%d" % i)
+                if os.path.isfile(src):
+                    try:
+                        if os.path.isfile(dst):
+                            os.remove(dst)
+                        os.replace(src, dst)
+                    except OSError:
+                        pass
+            if os.path.isfile(path):
+                try:
+                    import shutil
+                    shutil.copy2(path, path + ".bak")
+                except OSError as ex:
+                    self.log("  strip: backup failed: %s" % ex)
+            tmp = path + ".tmp_strip"
+            with open(tmp, "wb") as fh:
+                fh.write(out)
+            os.replace(tmp, path)
+        except Exception as ex:
+            messagebox.showerror("Write failed", str(ex))
+            return
+
+        size_after = 0
+        try:
+            size_after = os.path.getsize(path)
+            self.container = load_container(path)
+        except Exception:
+            pass
+        self.log(
+            "Strip to pad: %s — voxels_cleared=%d ents_removed=%d "
+            "pads_kept=%d  BKCK kept/dropped=%d/%d  FLCK dropped=%d  "
+            "ILAS dropped=%d  size %s → %s"
+            % (os.path.basename(path), n_vox_cleared, n_ents_removed,
+               n_pads_kept, n_bkck_kept, n_bkck_dropped, n_flck_dropped,
+               n_ilas_dropped,
+               "{:,}".format(size_before), "{:,}".format(size_after)))
+        messagebox.showinfo(
+            "Strip complete",
+            "Cleared %d voxel(s), removed %d entit(y/ies).\n"
+            "Pads kept: %d\n"
+            "Dropped: %d empty BKCK, %d FLCK, %d ILAS\n\n"
+            "Size: %s → %s bytes\n"
+            "Backup: %s.bak\n\n"
+            "Reload the world in-game to verify."
+            % (n_vox_cleared, n_ents_removed, n_pads_kept,
+               n_bkck_dropped, n_flck_dropped, n_ilas_dropped,
+               "{:,}".format(size_before), "{:,}".format(size_after),
+               os.path.basename(path)))
+
     def _guess_custom_world_name(self, container):
         """Pick a human title from sign texts (e.g. All Items World banners).
 
@@ -6779,7 +7462,17 @@ class App(tk.Tk):
                     chest_n += count_inventory_entities_in_doc(doc)
         custom = self._guess_custom_world_name(c)
         info = parse_save_filename(path)
-        base = info.get("location_name") or "(unknown)"
+        if not hasattr(self, "_universe_meta"):
+            self._universe_meta = {}
+        # Must use CIPI/Creative resolution — never raw WORLD_LOCATIONS alone,
+        # or Open selected overwrites "canyoufindthis [Creative]" with the
+        # story location code name (Tomb Of C'Thiris, Vacant Polar, …).
+        base = resolve_world_display_name(
+            info,
+            universe_meta=self._universe_meta,
+            dctx=self.dctx,
+            save_rows=getattr(self, "_all_saves", None),
+        )
         display = ("%s — %s" % (custom, base)) if custom else base
         try:
             scanned_mtime = os.path.getmtime(path)
@@ -6835,13 +7528,12 @@ class App(tk.Tk):
                         umeta = getattr(self, "_universe_meta", {}).get(
                             info.get("universe"))
                         break
-            if umeta and umeta.get("gameplay_mode") == "Creative":
-                loc = info.get("location")
-                cipi = (umeta.get("cipi") or {}).get(loc) or {}
-                cname = cipi.get("name") or ("slot 0x%X" % (loc or 0))
-                display = "World U%s · %s [Creative]" % (
-                    info.get("universe") if info.get("universe") is not None
-                    else "?", cname)
+            display = resolve_world_display_name(
+                info,
+                universe_meta=getattr(self, "_universe_meta", {}),
+                dctx=self.dctx,
+                save_rows=getattr(self, "_all_saves", None),
+            )
         except Exception:
             pass
         self.log("Loaded world %s — %s — %d entries, header %s, data %s"
@@ -6922,8 +7614,12 @@ class App(tk.Tk):
                 rows.append((e, doc, kind, chest, container))
 
         dlg = tk.Toplevel(self)
-        dlg.title("Inventories — %s" % (info.get("location_name") or
-                                        os.path.basename(path)))
+        if not hasattr(self, "_universe_meta"):
+            self._universe_meta = {}
+        _wname = resolve_world_display_name(
+            info, universe_meta=self._universe_meta, dctx=self.dctx,
+            save_rows=getattr(self, "_all_saves", None))
+        dlg.title("Inventories — %s" % _wname)
         dlg.geometry("920x560")
         ttk.Label(
             dlg,
@@ -7843,15 +8539,8 @@ class App(tk.Tk):
         legend.pack(anchor="w")
 
         def _color_for(val):
-            known = {
-                0: "#1a1a22",
-                1: "#8B5A2B",
-                10: "#2F2F2F",
-                244: "#3D5A80",
-                251: "#5B8DEF",
-            }
-            if val in known:
-                return known[val]
+            if val in BLOCK_COLORS:
+                return BLOCK_COLORS[val]
             h = (val * 37) & 0xFF
             return "#%02x%02x%02x" % (40 + (h % 180), 40 + ((h * 3) % 180),
                                        40 + ((h * 7) % 180))
@@ -7976,8 +8665,11 @@ class App(tk.Tk):
                 rows.append((e, doc, kind, sign, container))
 
         dlg = tk.Toplevel(self)
-        dlg.title("Signs — %s" % (info.get("location_name") or
-                                  os.path.basename(path)))
+        if not hasattr(self, "_universe_meta"):
+            self._universe_meta = {}
+        dlg.title("Signs — %s" % resolve_world_display_name(
+            info, universe_meta=self._universe_meta, dctx=self.dctx,
+            save_rows=getattr(self, "_all_saves", None)))
         dlg.geometry("780x480")
         ttk.Label(
             dlg,
@@ -8159,8 +8851,12 @@ class App(tk.Tk):
                 npc_rows.append((e, o, tag, container, doc, kind))
 
         dlg = tk.Toplevel(self)
-        dlg.title("NPCs / spawns — %s" % (info.get("location_name") or
-                                          os.path.basename(path)))
+        if not hasattr(self, "_universe_meta"):
+            self._universe_meta = {}
+        island_name = resolve_world_display_name(
+            info, universe_meta=self._universe_meta, dctx=self.dctx,
+            save_rows=getattr(self, "_all_saves", None))
+        dlg.title("NPCs / spawns — %s" % island_name)
         dlg.geometry("900x520")
         ttk.Label(
             dlg,
@@ -8168,9 +8864,6 @@ class App(tk.Tk):
                  "TemplateCRC (test). Use a known NPC template."
                  % len(npc_rows),
         ).pack(anchor="w", padx=8, pady=6)
-
-        island_name = (info.get("location_name") or
-                       info.get("label") or os.path.basename(path))
         cols = ("idx", "name", "kind", "islands", "x", "y", "z", "text", "template", "chunk")
         tree = ttk.Treeview(dlg, columns=cols, show="headings", height=16,
                             selectmode="extended")
@@ -9239,9 +9932,59 @@ class App(tk.Tk):
         # (the "4 disconnected blobs" bug on flat creative islands).
         # Dense sequential ids 0..N use linear 8×8 + local axis swap.
         terrain_origin = {}  # chunk_id -> (ox, oz)
+
+        # Pick the landing-pad entity that actually sits on block-251 surface
+        # voxels. Strip/rebuild can leave ghost pads at old coordinates
+        # (e.g. 331,297) that otherwise dominate map bounds and hide the
+        # real pad under a huge empty frame.
+        def _score_pad_on_251(pad_pos, grid_fn, swap):
+            if not pad_pos:
+                return 1e9
+            best = 1e9
+            for cid, cells in terrain_chunks.items():
+                try:
+                    ci = int(cid)
+                except (TypeError, ValueError):
+                    continue
+                gx, gz = grid_fn(ci & 63) if grid_fn is chunk_id_to_grid_bitfield else grid_fn(ci)
+                ox, oz = float(gx * 32), float(gz * 32)
+                pts = []
+                for lx, ly, lz, b in cells:
+                    if b != 251:
+                        continue
+                    wx, wz = local_to_world_xz(ox, oz, lx, lz, swap)
+                    pts.append((wx + 0.5, wz + 0.5))
+                if len(pts) < 4:
+                    continue
+                cx = sum(p[0] for p in pts) / len(pts)
+                cz = sum(p[1] for p in pts) / len(pts)
+                dist = ((cx - pad_pos[0]) ** 2 + (cz - pad_pos[2]) ** 2) ** 0.5
+                if dist < best:
+                    best = dist
+            return best
+
         pad_world = None
-        if pads and pads[0].get("pos"):
-            pad_world = pads[0]["pos"]
+        if pads:
+            ranked = []
+            for p in pads:
+                pos = p.get("pos")
+                if not pos:
+                    continue
+                d = min(
+                    _score_pad_on_251(pos, chunk_id_to_grid_bitfield, False),
+                    _score_pad_on_251(pos, chunk_id_to_grid_linear, True),
+                )
+                ranked.append((d, p))
+            ranked.sort(key=lambda t: t[0])
+            if ranked:
+                pad_world = ranked[0][1]["pos"]
+                # Drop ghost pads far from the real one so they cannot
+                # stretch the map bounds.
+                if ranked[0][0] < 64.0:
+                    pads[:] = [p for d, p in ranked if d < 64.0]
+                else:
+                    # No pad near 251 — keep only the closest entity
+                    pads[:] = [ranked[0][1]]
 
         int_ids = []
         for cid in terrain_chunks:
@@ -9251,7 +9994,7 @@ class App(tk.Tk):
                 continue
             if ci >= 0:
                 int_ids.append(ci)
-        sparse = chunk_ids_are_sparse_bitfield(int_ids)
+        sparse_guess = chunk_ids_are_sparse_bitfield(int_ids)
         # Prefer USHD.gameplayMode from parent universe when available.
         # Dense BKCK on a Creative blueprint must still show terrain.
         gameplay_mode = None
@@ -9280,18 +10023,72 @@ class App(tk.Tk):
                     break
         except Exception:
             pass
+
+        # Pick linear vs bit-field by which mapping puts a 4×4 of block 251
+        # nearest the landing-pad entity. Id-pattern heuristics alone miss
+        # dense creative islands (41/64 chunks) that still use bit-field
+        # packing — those rendered as scattered brown continents.
+        def _pad_align_score(grid_fn, swap):
+            if pad_world is None:
+                return 1e9
+            best = 1e9
+            for cid, cells in terrain_chunks.items():
+                try:
+                    ci = int(cid)
+                except (TypeError, ValueError):
+                    continue
+                gx, gz = grid_fn(ci)
+                ox, oz = float(gx * 32), float(gz * 32)
+                pts = []
+                for lx, ly, lz, b in cells:
+                    if b != 251:
+                        continue
+                    wx, wz = local_to_world_xz(ox, oz, lx, lz, swap)
+                    pts.append((wx + 0.5, wz + 0.5))
+                if len(pts) < 4:
+                    continue
+                # Prefer ~16-cell compact pads
+                if len(pts) > 24:
+                    cx = sum(p[0] for p in pts) / len(pts)
+                    cz = sum(p[1] for p in pts) / len(pts)
+                    pts = sorted(
+                        pts,
+                        key=lambda p: (p[0] - cx) ** 2 + (p[1] - cz) ** 2
+                    )[:16]
+                cx = sum(p[0] for p in pts) / len(pts)
+                cz = sum(p[1] for p in pts) / len(pts)
+                dist = ((cx - pad_world[0]) ** 2 +
+                        (cz - pad_world[2]) ** 2) ** 0.5
+                # Penalise wrong cell count lightly
+                dist += abs(len(pts) - 16) * 0.5
+                if dist < best:
+                    best = dist
+            return best
+
+        score_linear = _pad_align_score(chunk_id_to_grid_linear, True)
+        score_bit = _pad_align_score(chunk_id_to_grid_bitfield, False)
+        if pad_world is not None and score_bit < score_linear - 8.0:
+            sparse = True
+        elif pad_world is not None and score_linear < score_bit - 8.0:
+            sparse = False
+        else:
+            sparse = sparse_guess
+        # No pad → fall back to id heuristic; Creative USHD forces trusted
         is_creative = (gameplay_mode == "Creative") or sparse
-        swap_axes = not sparse  # grid geometry still from id pattern
+        swap_axes = not sparse
         grid_fn = chunk_id_to_grid_bitfield if sparse else chunk_id_to_grid_linear
         if gameplay_mode == "Creative":
             world_kind = "Creative (USHD)"
         elif sparse:
-            world_kind = "Superflat"
+            world_kind = "Superflat/bitfield"
         else:
             world_kind = "Story/Generated"
-        self.log("Map grid: %s (%d chunks), axis_swap=%s — %s"
-                 % ("sparse-bitfield" if sparse else "linear-8x8",
-                    len(int_ids), swap_axes, world_kind))
+        self.log(
+            "Map grid: %s (%d chunks), axis_swap=%s — %s "
+            "(pad-align linear=%.1f bitfield=%.1f)"
+            % ("sparse-bitfield" if sparse else "linear-8x8",
+               len(int_ids), swap_axes, world_kind,
+               score_linear, score_bit))
 
         for ci in int_ids:
             gx, gz = grid_fn(ci)
@@ -9313,14 +10110,17 @@ class App(tk.Tk):
                         pad_world[0] - cx, pad_world[2] - cz)
 
         # Snap grid so landing-pad voxels line up with pad entity.
-        # id 251 appears in many chunks. Prefer the cluster closest to the
-        # pad entity whose count is near 16 (true 4×4). "Densest" alone
-        # locked onto wrong chunks (50+ cells) and shifted the island so
-        # props sat in a black void.
+        # CRITICAL: prop entities (sunstone, chests, …) already use absolute
+        # world coords that match the pad entity. Only snap terrain when the
+        # pad entity is *not* already sitting on pad surface/detail voxels —
+        # otherwise a distant decorative 251 cluster pulls the whole island
+        # and every prop ends up in the wrong place.
         snap_dx = snap_dz = 0.0
         pad_local_y = None
         if pad_world is not None and terrain_origin:
-            candidates = []  # (score, pts, cid)
+            # Is the pad entity already on 244/251 without any snap?
+            already_on_pad = False
+            near_pad_pts = []
             for cid, cells in terrain_chunks.items():
                 orig = terrain_origin.get(cid)
                 if orig is None:
@@ -9331,42 +10131,78 @@ class App(tk.Tk):
                 if not orig:
                     continue
                 ox, oz = orig
-                pts = []
                 for lx, ly, lz, b in cells:
-                    if b == 251:
+                    if b not in (244, 251):
+                        continue
+                    wx, wz = local_to_world_xz(ox, oz, lx, lz, swap_axes)
+                    d = ((wx + 0.5 - pad_world[0]) ** 2 +
+                         (wz + 0.5 - pad_world[2]) ** 2) ** 0.5
+                    if d < 6.0:
+                        already_on_pad = True
+                    if b == 251 and d < 32.0:
+                        near_pad_pts.append((wx + 0.5, wz + 0.5, ly, d))
+            if already_on_pad:
+                # Entity and voxels share a frame — do not shift terrain.
+                snap_dx = snap_dz = 0.0
+                if near_pad_pts:
+                    pad_local_y = int(round(
+                        sum(p[2] for p in near_pad_pts) / len(near_pad_pts)))
+            else:
+                candidates = []
+                for cid, cells in terrain_chunks.items():
+                    orig = terrain_origin.get(cid)
+                    if orig is None:
+                        try:
+                            orig = terrain_origin.get(int(cid))
+                        except (TypeError, ValueError):
+                            continue
+                    if not orig:
+                        continue
+                    ox, oz = orig
+                    pts = []
+                    for lx, ly, lz, b in cells:
+                        if b != 251:
+                            continue
                         wx, wz = local_to_world_xz(ox, oz, lx, lz, swap_axes)
                         pts.append((wx + 0.5, wz + 0.5, ly))
-                if len(pts) < 4:
-                    continue
-                xs = [p[0] for p in pts]; zs = [p[1] for p in pts]
-                # Prefer ~16 cells and a compact footprint (true 4×4 pad).
-                # Do NOT use distance-to-entity in pre-snap space — that
-                # compares different coordinate frames and picks wrong chunks.
-                area = (max(xs) - min(xs) + 1) * (max(zs) - min(zs) + 1)
-                score = abs(len(pts) - 16) * 1000 + area
-                candidates.append((score, pts, cid))
-            candidates.sort(key=lambda t: t[0])
-            pad_vox = candidates[0][1] if candidates else []
-            if len(pad_vox) > 24:
-                cx = sum(p[0] for p in pad_vox) / len(pad_vox)
-                cz = sum(p[1] for p in pad_vox) / len(pad_vox)
-                pad_vox = sorted(
-                    pad_vox,
-                    key=lambda p: (p[0] - cx) ** 2 + (p[1] - cz) ** 2
-                )[:16]
-            if len(pad_vox) >= 4:
-                vx = sum(p[0] for p in pad_vox) / len(pad_vox)
-                vz = sum(p[1] for p in pad_vox) / len(pad_vox)
-                snap_dx = pad_world[0] - vx
-                snap_dz = pad_world[2] - vz
-                pad_local_y = int(round(
-                    sum(p[2] for p in pad_vox) / len(pad_vox)))
-                for cid in list(terrain_origin.keys()):
-                    ox, oz = terrain_origin[cid]
-                    # Integer origins so heightmap subsampling stays regular
-                    terrain_origin[cid] = (
-                        float(round(ox + snap_dx)),
-                        float(round(oz + snap_dz)))
+                    if len(pts) < 4:
+                        continue
+                    xs = [p[0] for p in pts]
+                    zs = [p[1] for p in pts]
+                    area = (max(xs) - min(xs) + 1) * (max(zs) - min(zs) + 1)
+                    cx = sum(xs) / len(xs)
+                    cz = sum(zs) / len(zs)
+                    dist = ((cx - pad_world[0]) ** 2 +
+                            (cz - pad_world[2]) ** 2) ** 0.5
+                    score = abs(len(pts) - 16) * 1000 + area + dist * 10
+                    candidates.append((score, pts, cid, dist))
+                candidates.sort(key=lambda t: t[0])
+                pad_vox = candidates[0][1] if candidates else []
+                best_dist = candidates[0][3] if candidates else 1e9
+                if len(pad_vox) > 24:
+                    cx = sum(p[0] for p in pad_vox) / len(pad_vox)
+                    cz = sum(p[1] for p in pad_vox) / len(pad_vox)
+                    pad_vox = sorted(
+                        pad_vox,
+                        key=lambda p: (p[0] - cx) ** 2 + (p[1] - cz) ** 2
+                    )[:16]
+                if len(pad_vox) >= 4 and best_dist < 48.0:
+                    vx = sum(p[0] for p in pad_vox) / len(pad_vox)
+                    vz = sum(p[1] for p in pad_vox) / len(pad_vox)
+                    snap_dx = pad_world[0] - vx
+                    snap_dz = pad_world[2] - vz
+                    if abs(snap_dx) > 64 or abs(snap_dz) > 64:
+                        snap_dx = snap_dz = 0.0
+                    else:
+                        pad_local_y = int(round(
+                            sum(p[2] for p in pad_vox) / len(pad_vox)))
+                        for cid in list(terrain_origin.keys()):
+                            ox, oz = terrain_origin[cid]
+                            terrain_origin[cid] = (
+                                float(round(ox + snap_dx)),
+                                float(round(oz + snap_dz)))
+                else:
+                    snap_dx = snap_dz = 0.0
 
         # Diagnostic: help debug voxel/prop alignment
         try:
@@ -9413,18 +10249,35 @@ class App(tk.Tk):
                 wx, wz = local_to_world_xz(ox, oz, lx, lz, swap_axes)
                 key = (int(round(wx)), int(round(wz)))
                 prev = terrain_heightmap.get(key)
-                if prev is None or ly > prev[0]:
+                # Surface priority: higher Y wins, with specials:
+                # - water (255) stays visible under pad-detail (244)
+                # - near the pad entity only, keep 251 visible under the
+                #   sample row; elsewhere 251 is often under prop-blocks
+                #   (sunstone etc.) and must not paint a false pad strip
+                if prev is None:
+                    terrain_heightmap[key] = (ly, b)
+                elif b == 255 and prev[1] == 244:
+                    terrain_heightmap[key] = (ly, b)
+                elif b == 244 and prev[1] == 255:
+                    pass  # keep water
+                elif ly > prev[0]:
                     terrain_heightmap[key] = (ly, b)
 
-        pts = []
+        # Entity positions are authoritative. Story/generated islands only
+        # store partial BKCK voxels (the continuous mesh is seed-built at
+        # runtime), so dumping every solid cell produces scattered brown
+        # fragments that do not match the in-game island. Prefer the entity
+        # cluster for bounds, and only fold terrain in when it is dense and
+        # nearby (creative / superflat / well-aligned grids).
+        entity_pts = []
         for group in (chests, signs, npcs, pads, others):
             for it in group:
                 x, _y, z = it["pos"]
-                pts.append((x, z))
-        # Include all heightmap / voxel cells that have an origin — do not
-        # hard-clip to 0..320 (pad snap can shift the island anywhere).
+                entity_pts.append((x, z))
+
+        terrain_pts = []
         for (ix, iz) in terrain_heightmap:
-            pts.append((ix, iz))
+            terrain_pts.append((float(ix), float(iz)))
         for cid, cells in terrain_chunks.items():
             orig = terrain_origin.get(cid)
             if orig is None:
@@ -9439,8 +10292,9 @@ class App(tk.Tk):
                 if b == 0:
                     continue
                 wx, wz = local_to_world_xz(ox, oz, lx, lz, swap_axes)
-                pts.append((wx, wz))
-        if not pts:
+                terrain_pts.append((wx, wz))
+
+        if not entity_pts and not terrain_pts:
             messagebox.showinfo(
                 "Empty map",
                 "No positioned entities found.\n\n"
@@ -9448,12 +10302,6 @@ class App(tk.Tk):
                 "loaded, and the file actually has BKCK chunks.")
             return
 
-        xs = [p[0] for p in pts]
-        zs = [p[1] for p in pts]
-        # Robust bounds: outliers (stray entities / mis-mapped chunks) used to
-        # stretch the map so the real island sat tiny in a corner. Use the
-        # inter-percentile range of entity+terrain points, then gently expand
-        # to include near-edge markers without re-including far outliers.
         def _pct_bounds(vals, lo=0.05, hi=0.95):
             if not vals:
                 return 0.0, 1.0
@@ -9465,31 +10313,88 @@ class App(tk.Tk):
             i_hi = min(n - 1, max(i_lo + 1, int(n * hi)))
             return float(s[i_lo]), float(s[i_hi])
 
-        min_x, max_x = _pct_bounds(xs)
-        min_z, max_z = _pct_bounds(zs)
-        core_w = max(max_x - min_x, 1.0)
-        core_h = max(max_z - min_z, 1.0)
-        expand = max(16.0, 0.15 * max(core_w, core_h))
-        cx0 = (min_x + max_x) * 0.5
-        cz0 = (min_z + max_z) * 0.5
-        for x, z in pts:
-            if abs(x - cx0) <= core_w * 0.5 + expand:
-                min_x = min(min_x, x)
-                max_x = max(max_x, x)
-            if abs(z - cz0) <= core_h * 0.5 + expand:
-                min_z = min(min_z, z)
-                max_z = max(max_z, z)
-        pad = max(8.0, 0.05 * max(max_x - min_x, max_z - min_z, 1.0))
-        min_x -= pad
-        max_x += pad
-        min_z -= pad
-        max_z += pad
+        def _bounds_from(pts_list, expand_frac=0.15, min_expand=16.0):
+            if not pts_list:
+                return None
+            xs = [p[0] for p in pts_list]
+            zs = [p[1] for p in pts_list]
+            a, b = _pct_bounds(xs)
+            c, d = _pct_bounds(zs)
+            core_w = max(b - a, 1.0)
+            core_h = max(d - c, 1.0)
+            expand = max(min_expand, expand_frac * max(core_w, core_h))
+            cx0 = (a + b) * 0.5
+            cz0 = (c + d) * 0.5
+            for x, z in pts_list:
+                if abs(x - cx0) <= core_w * 0.5 + expand:
+                    a = min(a, x)
+                    b = max(b, x)
+                if abs(z - cz0) <= core_h * 0.5 + expand:
+                    c = min(c, z)
+                    d = max(d, z)
+            pad = max(8.0, 0.05 * max(b - a, d - c, 1.0))
+            return a - pad, b + pad, c - pad, d + pad
+
+        # Creative/superflat grids are trustworthy full shapes. Story islands
+        # get entity-anchored bounds; terrain is clipped to that region when
+        # drawn so orphan BKCK fragments stay off-screen.
+        # Creative with dense terrain: prefer terrain bounds so a long block
+        # row reads as a horizontal strip (entity outliers no longer win).
+        terrain_trusted = bool(is_creative)
+        if terrain_trusted and len(terrain_pts) >= 32:
+            min_x, max_x, min_z, max_z = _bounds_from(terrain_pts)
+            # Fold in entities that sit near the terrain (real pad, props)
+            if entity_pts:
+                tcx = (min_x + max_x) * 0.5
+                tcz = (min_z + max_z) * 0.5
+                tr = max(max_x - min_x, max_z - min_z, 32.0)
+                for x, z in entity_pts:
+                    if abs(x - tcx) <= tr and abs(z - tcz) <= tr:
+                        min_x = min(min_x, x - 4)
+                        max_x = max(max_x, x + 4)
+                        min_z = min(min_z, z - 4)
+                        max_z = max(max_z, z + 4)
+        elif entity_pts:
+            min_x, max_x, min_z, max_z = _bounds_from(entity_pts)
+            if terrain_trusted and terrain_pts:
+                t_bounds = _bounds_from(terrain_pts)
+                if t_bounds:
+                    min_x = min(min_x, t_bounds[0])
+                    max_x = max(max_x, t_bounds[1])
+                    min_z = min(min_z, t_bounds[2])
+                    max_z = max(max_z, t_bounds[3])
+            elif terrain_pts and not terrain_trusted:
+                # Story: only absorb terrain that sits near the entity cluster
+                ecx = (min_x + max_x) * 0.5
+                ecz = (min_z + max_z) * 0.5
+                er = max(max_x - min_x, max_z - min_z, 32.0) * 0.75
+                near = [(x, z) for x, z in terrain_pts
+                        if abs(x - ecx) <= er and abs(z - ecz) <= er]
+                if near:
+                    for x, z in near:
+                        min_x = min(min_x, x - 4)
+                        max_x = max(max_x, x + 4)
+                        min_z = min(min_z, z - 4)
+                        max_z = max(max_z, z + 4)
+        else:
+            min_x, max_x, min_z, max_z = _bounds_from(terrain_pts)
+
         world_w = max(max_x - min_x, 1.0)
         world_h = max(max_z - min_z, 1.0)
+        # Clip window used when drawing story terrain (entity region + margin)
+        terrain_clip = None
+        if not terrain_trusted and entity_pts:
+            terrain_clip = (min_x - 8, max_x + 8, min_z - 8, max_z + 8)
 
         dlg = tk.Toplevel(self)
-        world_label = (info.get("location_name") or
-                       info.get("label") or "World")
+        if not hasattr(self, "_universe_meta"):
+            self._universe_meta = {}
+        world_label = resolve_world_display_name(
+            info,
+            universe_meta=self._universe_meta,
+            dctx=self.dctx,
+            save_rows=getattr(self, "_all_saves", None),
+        )
         fname = os.path.basename(path)
         dlg.title("Map — %s  ·  %s" % (world_label, fname))
         dlg.geometry("920x720")
@@ -9551,11 +10456,18 @@ class App(tk.Tk):
                 redraw())
         ).pack(side="left", padx=2)
 
-        # Creative / Superflat → show BKCK terrain by default.
-        # Story/Generated → hide (seed mesh not fully stored).
-        show_terrain = tk.BooleanVar(value=bool(is_creative))
-        _terr_lbl = ("Terrain" if is_creative
-                     else "Terrain (off — story)")
+        # Always show decoded BKCK solids when present. Creative/superflat
+        # get the full shape; story islands are clipped to the entity region
+        # (terrain_clip) so local ground appears under props without the
+        # scattered orphan continents.
+        _have_terrain = bool(terrain_heightmap)
+        show_terrain = tk.BooleanVar(value=_have_terrain)
+        if not _have_terrain:
+            _terr_lbl = "Terrain (none)"
+        elif terrain_trusted:
+            _terr_lbl = "Terrain"
+        else:
+            _terr_lbl = "Terrain (near props)"
         ttk.Checkbutton(
             layers, text=_terr_lbl, variable=show_terrain,
             command=lambda: redraw()).pack(side="left", padx=6)
@@ -9576,6 +10488,353 @@ class App(tk.Tk):
             terrain_y_lbl.config(text="Surface" if y < 0 else str(y))
             redraw()
         terrain_y_scale.configure(command=_on_terrain_y)
+
+        # ---- Block paint / fill / set-id tools (flat surface edits) ----
+        paint_bar = ttk.Frame(dlg)
+        paint_bar.pack(fill="x", padx=8, pady=(4, 0))
+        paint_mode = tk.StringVar(value="pan")  # pan | paint | fill
+        paint_block = tk.IntVar(value=1)
+        paint_status = tk.StringVar(value="")
+        # Pending cells for this stroke: (ix, iz) -> (ly, block_id)
+        paint_pending = {}
+        # chunk_id -> container entry id (for writes)
+        chunk_to_entry = {}
+        for e, doc, kind, nodes, _cont in scanned:
+            for vx in extract_bkck_voxels(nodes, e.get("id")):
+                try:
+                    chunk_to_entry[int(vx["chunk_id"])] = (e["id"], kind)
+                except (TypeError, ValueError):
+                    pass
+
+        ttk.Label(paint_bar, text="Tool:").pack(side="left")
+        for label, mode in (("Pan", "pan"), ("Paint", "paint"), ("Fill", "fill")):
+            ttk.Radiobutton(
+                paint_bar, text=label, value=mode, variable=paint_mode
+            ).pack(side="left", padx=2)
+
+        ttk.Label(paint_bar, text="  Block:").pack(side="left")
+        block_choices = []
+        for bid in sorted(KNOWN_VOXEL_BLOCKS.keys()):
+            if bid == 0:
+                block_choices.append((0, "0 air (erase)"))
+            else:
+                block_choices.append(
+                    (bid, "%d %s" % (bid, KNOWN_VOXEL_BLOCKS[bid])))
+        # Also allow typing any 0..255
+        block_combo = ttk.Combobox(
+            paint_bar, width=28,
+            values=[c[1] for c in block_choices])
+        block_combo.set("1 dirt")
+        block_combo.pack(side="left", padx=2)
+
+        def _selected_block_id():
+            raw = (block_combo.get() or "").strip()
+            try:
+                return max(0, min(255, int(raw.split()[0])))
+            except (ValueError, IndexError):
+                return 1
+
+        ttk.Label(
+            paint_bar,
+            text="  Y=slider/Surface · LMB paint · MMB/Shift-LMB pan"
+        ).pack(side="left", padx=6)
+        ttk.Label(paint_bar, textvariable=paint_status, foreground="#4a9").pack(
+            side="left", padx=4)
+        # Show absolute target so it's obvious which file is written
+        _paint_target = os.path.abspath(path) if path else ""
+        ttk.Label(
+            dlg,
+            text="Paint writes to: %s" % _paint_target,
+            foreground="#888",
+            font=("Segoe UI", 8),
+        ).pack(fill="x", padx=8)
+
+        def canvas_to_world(evt):
+            cx = canvas.canvasx(evt.x)
+            cy = canvas.canvasy(evt.y)
+            zmul = state["zoom"]
+            pw = base_w * zmul
+            ph = base_h * zmul
+            m = margin * max(1.0, zmul * 0.5)
+            wx = min_x + (cx - m) / max(pw, 1e-6) * world_w
+            wz = max_z - (cy - m) / max(ph, 1e-6) * world_h
+            return wx, wz
+
+        def _paint_y_for_column(ix, iz):
+            """Y level to write: exact slice, else surface, else default 2."""
+            ysel = int(terrain_y.get())
+            if ysel >= 0:
+                return ysel
+            prev = terrain_heightmap.get((ix, iz))
+            if prev is not None:
+                return int(prev[0])
+            return 2
+
+        def _queue_paint_cell(ix, iz, block_id):
+            hit = find_chunk_for_world_xz(
+                ix, iz, terrain_origin, swap_axes)
+            if not hit:
+                paint_status.set(
+                    "Outside chunk grid (%d,%d) — click painted terrain"
+                    % (ix, iz))
+                return False
+            ly = _paint_y_for_column(ix, iz)
+            paint_pending[(ix, iz)] = (ly, block_id)
+            paint_status.set("Queued %d cell(s)…" % len(paint_pending))
+            # Live preview on heightmap
+            if block_id == 0:
+                terrain_heightmap.pop((ix, iz), None)
+            else:
+                terrain_heightmap[(ix, iz)] = (ly, block_id)
+            cid, _ox, _oz, lx, lz = hit
+            cells = terrain_chunks.get(cid)
+            if cells is not None:
+                new_cells = [
+                    (a, b, c, d) for (a, b, c, d) in cells
+                    if not (a == lx and c == lz and b == ly)]
+                if block_id != 0:
+                    new_cells.append((lx, ly, lz, block_id))
+                terrain_chunks[cid] = new_cells
+            return True
+
+        def _commit_paint_pending():
+            if not paint_pending:
+                paint_status.set("Nothing to write (no cells queued)")
+                return 0
+            edits = dict(paint_pending)
+            paint_pending.clear()
+            n, detail = _write_voxel_edits(
+                path, edits, terrain_origin, swap_axes, chunk_to_entry)
+            paint_status.set(detail)
+            self.log("Map paint: %s → %s" % (detail, os.path.basename(path)))
+            return n
+
+        def _write_voxel_edits(wpath, edits, origins, swap, cid_entry):
+            """Apply {(ix,iz):(ly,bid)} to BKCK voxelData and save wpath.
+
+            Returns (changed_count, status_message).
+            """
+            if not edits:
+                return 0, "No edits"
+            if not origins:
+                return 0, "No terrain origins (open a world with BKCK voxels)"
+            if self.dctx is None or self.cctx is None:
+                if not self._ensure_dict():
+                    return 0, "Dict/compressor not ready"
+            try:
+                container = load_container(wpath)
+            except Exception as ex:
+                messagebox.showerror("Paint", "Load failed: %s" % ex)
+                return 0, "Load failed"
+
+            def _walk(ns):
+                if isinstance(ns, list):
+                    for n in ns:
+                        yield from _walk(n)
+                elif isinstance(ns, dict):
+                    yield ns
+                    ch = ns.get("children")
+                    if ch:
+                        yield from _walk(ch)
+
+            # Build entry_id → (kind, raw_doc_chunk_id) by reading each BKCK
+            # so we don't depend on a possibly stale cid_entry map.
+            entry_by_chunk = {}  # chunk_id int -> (entry_id, kind)
+            for e in container.entries:
+                if e.get("tag") != b"BKCK":
+                    continue
+                try:
+                    doc, kind = unwrap(container.chunk(e), self.dctx)
+                    nodes, _ = bson_parse(bytearray(doc))
+                except Exception:
+                    continue
+                cid = int(e["id"])
+                for n in _walk(nodes):
+                    if n.get("key") == "id" and n.get("children") is None:
+                        try:
+                            cid = int(n.get("value"))
+                        except (TypeError, ValueError):
+                            pass
+                        break
+                # Also take every chunk_id from extract
+                for vx in extract_bkck_voxels(nodes, e.get("id")):
+                    try:
+                        entry_by_chunk[int(vx["chunk_id"])] = (
+                            e["id"], kind)
+                    except (TypeError, ValueError):
+                        pass
+                entry_by_chunk[cid] = (e["id"], kind)
+                entry_by_chunk[int(e["id"])] = (e["id"], kind)
+
+            by_entry = {}  # entry_id -> list of (lx,ly,lz,bid)
+            skipped = 0
+            for (ix, iz), (ly, bid) in edits.items():
+                hit = find_chunk_for_world_xz(ix, iz, origins, swap)
+                if not hit:
+                    skipped += 1
+                    continue
+                cid, ox, oz, lx, lz = hit
+                if not (0 <= int(ly) < 32 and 0 <= lx < 32 and 0 <= lz < 32):
+                    skipped += 1
+                    continue
+                meta = entry_by_chunk.get(cid)
+                if meta is None:
+                    meta = entry_by_chunk.get(int(cid) & 63)
+                if meta is None:
+                    # Last resort: any entry whose origin covers this cell
+                    meta = cid_entry.get(cid) or cid_entry.get(int(cid) & 63)
+                if meta is None:
+                    skipped += 1
+                    continue
+                eid = meta[0]
+                by_entry.setdefault(eid, []).append(
+                    (int(lx), int(ly), int(lz), int(bid) & 0xFF))
+
+            if not by_entry:
+                return 0, ("0 cells (skipped %d — click on terrain, "
+                           "origins=%d)" % (skipped, len(origins)))
+
+            new_entries = []
+            changed = 0
+            for e in container.entries:
+                raw = container.chunk(e)
+                eid = e["id"]
+                tag = e["tag"]
+                if eid not in by_entry or tag != b"BKCK":
+                    new_entries.append((eid, tag, raw))
+                    continue
+                try:
+                    doc, kind = unwrap(raw, self.dctx)
+                except Exception as ex:
+                    self.log("paint unwrap: %s" % ex)
+                    new_entries.append((eid, tag, raw))
+                    continue
+                buf = bytearray(doc)
+                try:
+                    nodes, _ = bson_parse(buf)
+                except Exception as ex:
+                    self.log("paint parse: %s" % ex)
+                    new_entries.append((eid, tag, raw))
+                    continue
+                voxel_node = None
+                for n in _walk(nodes):
+                    if n.get("key") == "voxelData" and n.get("type") == 0x05:
+                        val = n.get("value")
+                        if isinstance(val, (bytes, bytearray)) and len(val) >= 32768:
+                            voxel_node = n
+                            break
+                if voxel_node is None:
+                    self.log("paint: no voxelData in entry %s" % eid)
+                    new_entries.append((eid, tag, raw))
+                    continue
+                full = bytearray(voxel_node["value"])
+                val = full[:32768]
+                for lx, ly, lz, bid in by_entry[eid]:
+                    idx = voxel_xyz_index(lx, ly, lz)
+                    if 0 <= idx < 32768:
+                        val[idx] = bid
+                        changed += 1
+                new_val = bytes(val) + bytes(full[32768:])
+                try:
+                    bson_patch(buf, voxel_node, new_val)
+                    payload = wrap(bytes(buf), kind, self.cctx)
+                except Exception as ex:
+                    self.log("paint patch/wrap: %s" % ex)
+                    new_entries.append((eid, tag, raw))
+                    continue
+                new_entries.append((eid, tag, payload))
+
+            if changed == 0:
+                return 0, "0 cells written (patch missed)"
+            out = rebuild_container(new_entries)
+            # Verify container CRCs before touching disk
+            try:
+                probe = Container(out)
+                hc, dc = probe.verify()
+                if not (hc and dc):
+                    return 0, "CRC check failed on rebuilt data — not saved"
+            except Exception as ex:
+                return 0, "Rebuild invalid: %s" % ex
+            try:
+                import shutil
+                wpath = os.path.abspath(wpath)
+                if os.path.isfile(wpath):
+                    shutil.copy2(wpath, wpath + ".bak")
+                tmp = wpath + ".tmp_paint"
+                with open(tmp, "wb") as fh:
+                    fh.write(out)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                os.replace(tmp, wpath)
+                # Confirm bytes actually landed
+                on_disk = open(wpath, "rb").read()
+                if on_disk != out:
+                    return 0, "Write mismatch — disk != buffer"
+                self.container = load_container(wpath)
+                self.savefile_path.set(wpath)
+            except Exception as ex:
+                messagebox.showerror("Paint write failed", str(ex))
+                return 0, "Write failed: %s" % ex
+
+            # Re-read and confirm at least one edited cell matches
+            verified = 0
+            try:
+                check = load_container(wpath)
+                # Rebuild a quick index of entry -> voxel bytes
+                for e in check.entries:
+                    if e.get("tag") != b"BKCK" or e["id"] not in by_entry:
+                        continue
+                    doc, _k = unwrap(check.chunk(e), self.dctx)
+                    nodes, _ = bson_parse(bytearray(doc))
+                    vox = None
+                    for n in _walk(nodes):
+                        if n.get("key") == "voxelData" and isinstance(
+                                n.get("value"), (bytes, bytearray)):
+                            vox = n["value"]
+                            break
+                    if not vox or len(vox) < 32768:
+                        continue
+                    for lx, ly, lz, bid in by_entry[e["id"]]:
+                        idx = voxel_xyz_index(lx, ly, lz)
+                        if 0 <= idx < 32768 and vox[idx] == bid:
+                            verified += 1
+            except Exception as ex:
+                self.log("paint verify: %s" % ex)
+            msg = "Saved %d cell(s), verified %d → %s" % (
+                changed, verified, os.path.basename(wpath))
+            if skipped:
+                msg += " (%d skipped)" % skipped
+            if verified == 0 and changed > 0:
+                msg += " ⚠ verify failed — file may not stick"
+            self.log("Paint absolute path: %s" % wpath)
+            return changed, msg
+
+        def _flood_fill(sx, sz, new_bid):
+            """Flood-fill surface cells matching the start block."""
+            start = terrain_heightmap.get((sx, sz))
+            if start is None:
+                old_bid = -1  # empty
+            else:
+                old_bid = start[1]
+            if old_bid == new_bid:
+                return
+            stack = [(sx, sz)]
+            seen = set()
+            limit = 8000
+            while stack and len(seen) < limit:
+                x, z = stack.pop()
+                if (x, z) in seen:
+                    continue
+                seen.add((x, z))
+                cur = terrain_heightmap.get((x, z))
+                cur_bid = -1 if cur is None else cur[1]
+                if cur_bid != old_bid:
+                    continue
+                _queue_paint_cell(x, z, new_bid)
+                for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nx, nz = x + dx, z + dz
+                    if (nx, nz) not in seen:
+                        stack.append((nx, nz))
 
         legend = ttk.Frame(dlg)
         legend.pack(fill="x", padx=8)
@@ -9606,11 +10865,13 @@ class App(tk.Tk):
             _legend_icon(f, color, bw, bh, oval=oval)
             ttk.Label(f, text=label).pack(side="left", padx=2)
 
-        wrap = ttk.Frame(dlg)
-        wrap.pack(fill="both", expand=True, padx=8, pady=4)
-        canvas = tk.Canvas(wrap, bg="#1a1a1a", highlightthickness=0)
-        hbar = ttk.Scrollbar(wrap, orient="horizontal", command=canvas.xview)
-        vbar = ttk.Scrollbar(wrap, orient="vertical", command=canvas.yview)
+        # NOTE: must not be named `wrap` — that shadows the module-level
+        # wrap() used to re-compress BKCK chunks after paint edits.
+        map_frame = ttk.Frame(dlg)
+        map_frame.pack(fill="both", expand=True, padx=8, pady=4)
+        canvas = tk.Canvas(map_frame, bg="#1a1a1a", highlightthickness=0)
+        hbar = ttk.Scrollbar(map_frame, orient="horizontal", command=canvas.xview)
+        vbar = ttk.Scrollbar(map_frame, orient="vertical", command=canvas.yview)
         canvas.configure(xscrollcommand=hbar.set, yscrollcommand=vbar.set)
         hbar.pack(side="bottom", fill="x")
         vbar.pack(side="right", fill="y")
@@ -9700,16 +10961,8 @@ class App(tk.Tk):
             if show_terrain.get() and (terrain_heightmap or terrain_chunks):
                 ty = int(terrain_y.get())
                 def _col(val):
-                    known = {
-                        1: "#8B5A2B", 2: "#6B3F1A", 7: "#4A3728",
-                        8: "#C4A574", 10: "#2F2F2F", 13: "#8A8A8A",
-                        14: "#3E2723", 15: "#A1887F", 16: "#795548",
-                        18: "#D7CCC8", 49: "#E6C88A", 50: "#F0E68C",
-                        51: "#ECEFF1", 244: "#3D5A80", 251: "#5B8DEF",
-                        252: "#7CB342",
-                    }
-                    if val in known:
-                        return known[val]
+                    if val in BLOCK_COLORS:
+                        return BLOCK_COLORS[val]
                     hv = (val * 37) & 0xFF
                     return "#%02x%02x%02x" % (
                         40 + hv % 180, 40 + (hv * 3) % 180,
@@ -9742,23 +10995,45 @@ class App(tk.Tk):
                     solids = terrain_heightmap
                 else:
                     solids = {k: (ty, b) for k, b in slice_cells.items()}
+                # Story islands: only draw solids inside the entity-anchored
+                # clip so distant orphan BKCK fragments stay off the map.
+                if terrain_clip is not None and solids:
+                    cx0, cx1, cz0, cz1 = terrain_clip
+                    solids = {
+                        k: v for k, v in solids.items()
+                        if cx0 <= k[0] <= cx1 and cz0 <= k[1] <= cz1
+                    }
                 n_sol = len(solids)
                 # Milder subsampling — keep the silhouette readable.
+                # Never skip water/pad cells (a 4×4 pool vanishes at step=2).
                 step = 1
                 if n_sol > 12000:
                     step = 2
                 if n_sol > 40000:
                     step = 3
+                _priority = {255, 251, 244, 252}  # water + pad surface
                 drawn = 0
                 hs = max(unit_x * 0.5 * step, 1.0)
                 vs = max(unit_z * 0.5 * step, 1.0)
-                # Align sample phase to origin so gaps stay regular
-                for (ix, iz), (yy, b) in solids.items():
-                    if step > 1 and ((ix % step) or (iz % step)):
+                # Draw bulk dirt first, then priority blocks on top so a
+                # tiny water pool isn't buried under oversized dirt samples.
+                ordered = sorted(
+                    solids.items(),
+                    key=lambda kv: (0 if kv[1][1] in _priority else 1))
+                for (ix, iz), (yy, b) in ordered:
+                    is_prio = b in _priority
+                    if (not is_prio) and step > 1 and ((ix % step) or (iz % step)):
                         continue
                     cx, cy = world_to_canvas(ix + 0.5, iz + 0.5)
+                    # Priority cells get a slightly larger min pixel so a
+                    # 4×4 water pool stays obvious on a full 128² dirt map.
+                    if is_prio:
+                        phs = max(unit_x * 0.5, 2.5)
+                        pvs = max(unit_z * 0.5, 2.5)
+                    else:
+                        phs, pvs = hs, vs
                     canvas.create_rectangle(
-                        cx - hs, cy - vs, cx + hs, cy + vs,
+                        cx - phs, cy - pvs, cx + phs, cy + pvs,
                         fill=_col(b), outline="", tags=("terrain",))
                     drawn += 1
                     if drawn >= 25000:
@@ -9782,13 +11057,18 @@ class App(tk.Tk):
                     tmpl = o.get("template")
                     tcrc = ((int(tmpl) & 0xFFFFFFFF)
                             if tmpl is not None else None)
-                    is_enemy = tcrc in ENEMY_TEMPLATE_CRCS
+                    label = _entity_display_name(o.get("entity"), tmpl)
+                    is_enemy = _is_enemy_map_marker(tcrc, o, label)
                     if is_enemy and not show_enemies.get():
                         continue
                     if (not is_enemy) and not show_other.get():
                         continue
-                    label = template_label(tmpl)
-                    color = "#c0392b" if is_enemy else "#7f8c8d"
+                    if is_enemy:
+                        color = "#c0392b"
+                    elif tcrc is not None and tcrc in BLOCK_PROP_COLORS:
+                        color = BLOCK_PROP_COLORS[tcrc]
+                    else:
+                        color = "#7f8c8d"
                     add_footprint(
                         x, z, 1, 1, color, "other",
                         "%s  %s  (%.1f, %.1f, %.1f)"
@@ -10039,7 +11319,7 @@ class App(tk.Tk):
                 tmpl = payload.get("template")
                 if tmpl is not None:
                     tcrc = int(tmpl) & 0xFFFFFFFF
-                    nname = template_label(tmpl)
+                    nname = _entity_display_name(h.get("entity"), tmpl)
                     text = "0x%08X\t%s\t%d" % (tcrc, nname, tcrc)
                     try:
                         dlg.clipboard_clear()
@@ -10124,7 +11404,28 @@ class App(tk.Tk):
                     pass
 
         def on_press(evt):
-            # Always a 6-tuple: (screen_x, screen_y, xview0, yview0, tw, th)
+            mode = paint_mode.get()
+            shift = bool(getattr(evt, "state", 0) & 0x0001)
+            # Middle-button or Shift+LMB always pans; Paint/Fill use LMB
+            is_pan = (mode == "pan" or shift
+                      or getattr(evt, "num", 1) == 2
+                      or (getattr(evt, "state", 0) & 0x0200))  # Button2 mask
+            if mode in ("paint", "fill") and not shift:
+                wx, wz = canvas_to_world(evt)
+                ix, iz = int(round(wx)), int(round(wz))
+                bid = _selected_block_id()
+                if mode == "fill":
+                    _flood_fill(ix, iz, bid)
+                    _commit_paint_pending()
+                    redraw()
+                    state["drag"] = None
+                    return
+                # paint stroke start
+                _queue_paint_cell(ix, iz, bid)
+                state["drag"] = ("paint", ix, iz)
+                redraw()
+                return
+            # Pan
             sr = canvas.cget("scrollregion").split()
             try:
                 x0, y0, x1, y1 = map(float, sr)
@@ -10133,6 +11434,7 @@ class App(tk.Tk):
             except Exception:
                 tw, th = 1.0, 1.0
             state["drag"] = (
+                "pan",
                 evt.x, evt.y,
                 canvas.xview()[0], canvas.yview()[0],
                 tw, th,
@@ -10141,14 +11443,28 @@ class App(tk.Tk):
         def on_drag(evt):
             if not state["drag"]:
                 return
-            lx, ly, xv0, yv0, tw, th = state["drag"]
+            if state["drag"][0] == "paint":
+                wx, wz = canvas_to_world(evt)
+                ix, iz = int(round(wx)), int(round(wz))
+                if (ix, iz) == (state["drag"][1], state["drag"][2]):
+                    return
+                state["drag"] = ("paint", ix, iz)
+                bid = _selected_block_id()
+                _queue_paint_cell(ix, iz, bid)
+                redraw()
+                return
+            if state["drag"][0] != "pan":
+                return
+            _tag, lx, ly, xv0, yv0, tw, th = state["drag"]
             dx = evt.x - lx
             dy = evt.y - ly
-            # Mouse right → content moves right → xview decreases
             canvas.xview_moveto(max(0.0, min(1.0, xv0 - dx / tw)))
             canvas.yview_moveto(max(0.0, min(1.0, yv0 - dy / th)))
 
         def on_release(evt):
+            if state.get("drag") and state["drag"][0] == "paint":
+                _commit_paint_pending()
+                redraw()
             state["drag"] = None
 
         canvas.bind("<Motion>", on_motion)
@@ -10157,6 +11473,27 @@ class App(tk.Tk):
         canvas.bind("<ButtonPress-1>", on_press)
         canvas.bind("<B1-Motion>", on_drag)
         canvas.bind("<ButtonRelease-1>", on_release)
+        # Middle-button pan even in paint mode
+        def on_mid_press(evt):
+            paint_mode.set("pan") if False else None
+            sr = canvas.cget("scrollregion").split()
+            try:
+                x0, y0, x1, y1 = map(float, sr)
+                tw = max(x1 - x0, 1.0)
+                th = max(y1 - y0, 1.0)
+            except Exception:
+                tw, th = 1.0, 1.0
+            state["drag"] = (
+                "pan", evt.x, evt.y,
+                canvas.xview()[0], canvas.yview()[0], tw, th,
+            )
+        def on_mid_drag(evt):
+            on_drag(evt)
+        def on_mid_release(evt):
+            state["drag"] = None
+        canvas.bind("<ButtonPress-2>", on_mid_press)
+        canvas.bind("<B2-Motion>", on_mid_drag)
+        canvas.bind("<ButtonRelease-2>", on_mid_release)
         # Zoom
         canvas.bind("<MouseWheel>", on_zoom)               # Windows
         canvas.bind("<Button-4>", on_zoom)                 # Linux up
@@ -10181,6 +11518,220 @@ class App(tk.Tk):
         ttk.Button(bf, text="Close", command=dlg.destroy).pack(side="right")
 
         redraw()
+
+    def open_world_3d_preview(self):
+        """Orbitable 3D voxel preview (matplotlib) — view only, no edit.
+
+        Coloured cubes from BKCK voxelData using BLOCK_COLORS. Large worlds
+        are subsampled so the window stays responsive.
+        """
+        path, info = self._resolve_world_path()
+        if not path:
+            messagebox.showinfo(
+                "No world",
+                "Select a world file first (Worlds tab or filter → Worlds).")
+            return
+        if not self._ensure_dict():
+            return
+        try:
+            from matplotlib.backends.backend_tkagg import (
+                FigureCanvasTkAgg, NavigationToolbar2Tk)
+            from matplotlib.figure import Figure
+            from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+        except ImportError as ex:
+            messagebox.showerror(
+                "3D preview",
+                "Need matplotlib for 3D preview.\n\n"
+                "Install with:\n  pip install matplotlib\n\n"
+                "(%s)" % ex)
+            return
+
+        def _hex_to_rgb(h):
+            h = (h or "#888888").lstrip("#")
+            if len(h) != 6:
+                return (0.5, 0.5, 0.5)
+            return tuple(int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+        try:
+            scanned = list(self._scan_world_bkck(path))
+        except Exception as exc:
+            messagebox.showerror("Save file error", str(exc))
+            return
+
+        # Collect non-air voxels with world coords (sparse bitfield default)
+        terrain_chunks = {}
+        for e, doc, kind, nodes, _c in scanned:
+            for vx in extract_bkck_voxels(nodes, e.get("id")):
+                cid = int(vx["chunk_id"])
+                cells = []
+                for i, b in vx["non_zero"]:
+                    if b == 0:
+                        continue
+                    lx, ly, lz = voxel_index_xyz(i)
+                    cells.append((lx, ly, lz, b))
+                if cells:
+                    terrain_chunks[cid] = cells
+
+        if not terrain_chunks:
+            messagebox.showinfo(
+                "3D preview",
+                "No solid BKCK voxels found in this world.")
+            return
+
+        int_ids = list(terrain_chunks.keys())
+        sparse = chunk_ids_are_sparse_bitfield(int_ids)
+        # Creative USHD → prefer bitfield
+        try:
+            for e in load_container(path).entries:
+                if e.get("tag") == b"USHD":
+                    sparse = True
+                    break
+        except Exception:
+            pass
+        grid_fn = (chunk_id_to_grid_bitfield if sparse
+                   else chunk_id_to_grid_linear)
+        swap_axes = not sparse
+        origins = {}
+        for cid in int_ids:
+            gx, gz = grid_fn(cid)
+            origins[cid] = (float(gx * 32), float(gz * 32))
+
+        # World-space integer cells: (wx, wy, wz) -> block id
+        cells_world = {}
+        for cid, cells in terrain_chunks.items():
+            ox, oz = origins.get(cid, (0.0, 0.0))
+            for lx, ly, lz, b in cells:
+                wx, wz = local_to_world_xz(ox, oz, lx, lz, swap_axes)
+                key = (int(round(wx)), int(ly), int(round(wz)))
+                cells_world[key] = b
+
+        n_total = len(cells_world)
+        if n_total == 0:
+            messagebox.showinfo("3D preview", "No solid voxels to show.")
+            return
+
+        min_x = min(k[0] for k in cells_world)
+        max_x = max(k[0] for k in cells_world)
+        min_y = min(k[1] for k in cells_world)
+        max_y = max(k[1] for k in cells_world)
+        min_z = min(k[2] for k in cells_world)
+        max_z = max(k[2] for k in cells_world)
+
+        nx = max_x - min_x + 1
+        ny = max_y - min_y + 1
+        nz = max_z - min_z + 1
+        # Cap grid size — voxels() is O(volume); thin creative strips are fine
+        MAX_DIM = 160
+        MAX_VOL = 120000
+        subtitle = "%d voxels  grid %d×%d×%d" % (n_total, nx, ny, nz)
+        if nx * ny * nz > MAX_VOL or max(nx, ny, nz) > MAX_DIM:
+            # Surface-only: keep top block per (x,z)
+            top = {}
+            for (wx, wy, wz), b in cells_world.items():
+                prev = top.get((wx, wz))
+                if prev is None or wy > prev[0]:
+                    top[(wx, wz)] = (wy, b)
+            cells_world = {
+                (wx, wy, wz): b for (wx, wz), (wy, b) in top.items()
+            }
+            n_total = len(cells_world)
+            min_x = min(k[0] for k in cells_world)
+            max_x = max(k[0] for k in cells_world)
+            min_y = min(k[1] for k in cells_world)
+            max_y = max(k[1] for k in cells_world)
+            min_z = min(k[2] for k in cells_world)
+            max_z = max(k[2] for k in cells_world)
+            nx = max_x - min_x + 1
+            ny = max_y - min_y + 1
+            nz = max_z - min_z + 1
+            subtitle = "%d surface voxels  grid %d×%d×%d" % (
+                n_total, nx, ny, nz)
+
+        # matplotlib voxels: filled[x, y, z] with plot-Z vertical.
+        # Map: plot_x=world X, plot_y=world Z, plot_z=world Y (up).
+        filled = [
+            [[False for _ in range(ny)] for _ in range(nz)]
+            for _ in range(nx)
+        ]
+        facecolors = [
+            [[(0.0, 0.0, 0.0, 0.0) for _ in range(ny)] for _ in range(nz)]
+            for _ in range(nx)
+        ]
+        for (wx, wy, wz), b in cells_world.items():
+            ix = wx - min_x
+            iy = wy - min_y
+            iz = wz - min_z
+            if not (0 <= ix < nx and 0 <= iy < ny and 0 <= iz < nz):
+                continue
+            # filled[x][y][z] in matplotlib → [plot_x][plot_y][plot_z]
+            # plot_x=ix, plot_y=iz (world Z), plot_z=iy (world Y up)
+            filled[ix][iz][iy] = True
+            r, g, bcol = _hex_to_rgb(BLOCK_COLORS.get(b, "#888888"))
+            facecolors[ix][iz][iy] = (r, g, bcol, 1.0)
+
+        dlg = tk.Toplevel(self)
+        dlg.title("3D preview — %s" % os.path.basename(path))
+        dlg.geometry("960x720")
+        dlg.minsize(640, 480)
+
+        top = ttk.Frame(dlg)
+        top.pack(fill="x", padx=8, pady=4)
+        ttk.Label(
+            top,
+            text="Orbit: left-drag · Zoom: scroll · Pan: right-drag  |  %s  |  %s"
+            % (subtitle, "bitfield" if sparse else "linear"),
+        ).pack(side="left")
+        ttk.Button(top, text="Close", command=dlg.destroy).pack(side="right")
+
+        fig = Figure(figsize=(9.2, 6.6), dpi=100)
+        ax = fig.add_subplot(111, projection="3d")
+        ax.set_facecolor("#1a1a22")
+        fig.patch.set_facecolor("#1a1a22")
+
+        # Real solid cubes (not scatter points). voxels prefers ndarray.
+        try:
+            import numpy as _np
+            filled = _np.asarray(filled, dtype=bool)
+            facecolors = _np.asarray(facecolors, dtype=float)
+        except ImportError:
+            pass
+        ax.voxels(
+            filled, facecolors=facecolors, edgecolor="#222222", linewidth=0.2,
+        )
+
+        ax.set_xlabel("X", color="#aaa")
+        ax.set_ylabel("Z", color="#aaa")
+        ax.set_zlabel("Y (up)", color="#aaa")
+        ax.tick_params(colors="#888")
+        try:
+            ax.xaxis.pane.set_facecolor((0.08, 0.08, 0.12, 1.0))
+            ax.yaxis.pane.set_facecolor((0.08, 0.08, 0.12, 1.0))
+            ax.zaxis.pane.set_facecolor((0.08, 0.08, 0.12, 1.0))
+            ax.xaxis.pane.set_edgecolor("#333")
+            ax.yaxis.pane.set_edgecolor("#333")
+            ax.zaxis.pane.set_edgecolor("#333")
+        except Exception:
+            pass
+        # 1 block = 1 unit on every axis so ground is actually flat
+        try:
+            ax.set_box_aspect((max(nx, 1), max(nz, 1), max(ny, 1)))
+        except Exception:
+            pass
+        # Slightly raised view so the slab reads as ground, not a line
+        ax.view_init(elev=35, azim=-60)
+        fig.tight_layout()
+
+        canvas_frame = ttk.Frame(dlg)
+        canvas_frame.pack(fill="both", expand=True, padx=4, pady=4)
+        canvas = FigureCanvasTkAgg(fig, master=canvas_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+        toolbar = NavigationToolbar2Tk(canvas, canvas_frame)
+        toolbar.update()
+
+        self.log(
+            "3D preview: %s voxels from %d chunk(s) — %s"
+            % (n_total, len(terrain_chunks), os.path.basename(path)))
 
     def _autoload_characters(self):
         """Populate the Characters tab on startup without a button press."""
@@ -10652,27 +12203,51 @@ class App(tk.Tk):
 
 
     def install_github_custom_save(self):
-        """Download a custom world/universe/character from the project GitHub."""
-        if not GITHUB_CUSTOM_SAVES:
-            messagebox.showinfo("None", "No custom saves listed.")
+        """Download a custom world from the project GitHub.
+
+        This button lives specifically in the Worlds tab, so only the
+        "world" entries from GITHUB_CUSTOM_SAVES are offered here -
+        universe and character entries in that shared list are for
+        their own tabs, not this one.
+        """
+        world_saves = [
+            (label, rel, local) for (label, rel, local) in GITHUB_CUSTOM_SAVES
+            if not local.startswith("01") and not local.startswith("03")
+        ]
+        if not world_saves:
+            messagebox.showinfo("None", "No custom worlds listed.")
             return
         dlg = tk.Toplevel(self)
-        dlg.title("Install custom save from GitHub")
+        dlg.title("Install custom world from GitHub")
         dlg.geometry("560x420")
+
+        # Optional: overwrite the currently selected world file (same path)
+        # so the custom content appears under the existing island slot.
+        # This is the button's main purpose, so it defaults ON whenever
+        # a world is selected - pick a world, pick a preset, done.
+        replace_var = tk.BooleanVar(value=False)
+        sel_world_path = None
+        try:
+            path, info = self._resolve_world_path()
+            if path and os.path.isfile(path):
+                sel_world_path = path
+        except Exception:
+            sel_world_path = None
+        if sel_world_path:
+            replace_var.set(True)
+
         ttk.Label(
             dlg,
             text="Downloads from CookiestMonster/Portal-Knights-Save-Editor\n"
-                 "World Files. Overwrites the chosen local filename in the\n"
-                 "Steam remote folder (backup is made first).",
+                 "World Files. With \"replace currently selected world\" "
+                 "checked (the default), this overwrites your selected "
+                 "world file directly - a backup is made first.",
             justify="left",
         ).pack(anchor="w", padx=10, pady=8)
         lb = tk.Listbox(dlg, font=("TkDefaultFont", 10), height=14)
         lb.pack(fill="both", expand=True, padx=10, pady=4)
-        for i, (label, _rel, local) in enumerate(GITHUB_CUSTOM_SAVES):
-            kind = ("character" if local.startswith("01")
-                    else "universe" if local.startswith("03")
-                    else "world")
-            lb.insert("end", "%s  →  %s (%s)" % (label, local, kind))
+        for label, _rel, local in world_saves:
+            lb.insert("end", "%s  →  %s" % (label, local))
         dest_var = tk.StringVar()
         # Default remote folder from known saves
         default_dir = ""
@@ -10683,10 +12258,28 @@ class App(tk.Tk):
         if not default_dir:
             default_dir = os.path.expanduser("~")
         dest_var.set(default_dir)
+
+        if sel_world_path:
+            ttk.Checkbutton(
+                dlg,
+                text="Replace currently selected world file (%s)"
+                     % os.path.basename(sel_world_path),
+                variable=replace_var,
+            ).pack(anchor="w", padx=10, pady=4)
+        else:
+            ttk.Label(
+                dlg,
+                text="No world selected, so this will install to a new "
+                     "filename below instead. Select a world in the "
+                     "Worlds tab first to replace it directly.",
+                foreground="#666", wraplength=520, justify="left",
+            ).pack(anchor="w", padx=10, pady=2)
+
         row = ttk.Frame(dlg)
         row.pack(fill="x", padx=10, pady=4)
-        ttk.Label(row, text="Steam remote folder:").pack(side="left")
-        ttk.Entry(row, textvariable=dest_var, width=48).pack(
+        ttk.Label(row, text="Or install to a new filename in:").pack(
+            side="left")
+        ttk.Entry(row, textvariable=dest_var, width=40).pack(
             side="left", padx=4, fill="x", expand=True)
 
         def browse():
@@ -10696,40 +12289,15 @@ class App(tk.Tk):
 
         ttk.Button(row, text="Browse…", command=browse).pack(side="left")
 
-        # Optional: overwrite the currently selected world file (same path)
-        # so the custom content appears under the existing island slot.
-        replace_var = tk.BooleanVar(value=False)
-        sel_world_path = None
-        try:
-            path, info = self._resolve_world_path()
-            if path and os.path.isfile(path):
-                sel_world_path = path
-        except Exception:
-            sel_world_path = None
-        if sel_world_path:
-            ttk.Checkbutton(
-                dlg,
-                text="Replace currently selected world file\n(%s)"
-                     % os.path.basename(sel_world_path),
-                variable=replace_var,
-            ).pack(anchor="w", padx=10, pady=4)
-        else:
-            ttk.Label(
-                dlg,
-                text="Tip: select a world in the Worlds tab first to enable "
-                     "“replace selected world”.",
-                foreground="#666",
-            ).pack(anchor="w", padx=10, pady=2)
-
         status = ttk.Label(dlg, text="", foreground="#333")
         status.pack(anchor="w", padx=10)
 
         def do_install():
             sel = lb.curselection()
             if not sel:
-                messagebox.showinfo("Select", "Pick a custom save.", parent=dlg)
+                messagebox.showinfo("Select", "Pick a custom world.", parent=dlg)
                 return
-            label, rel, local_name = GITHUB_CUSTOM_SAVES[sel[0]]
+            label, rel, local_name = world_saves[sel[0]]
             dest_dir = dest_var.get().strip()
             if replace_var.get() and sel_world_path:
                 dest_path = sel_world_path
@@ -12446,7 +14014,7 @@ class CharacterEditor(tk.Toplevel):
                     messagebox.showerror(
                         "Unknown", "Pick Male or Female.", parent=self)
                     return
-                apply_node(node, "Gender", str(GENDER_BY_NAME[name]))
+                self._apply_gender_change(node, GENDER_BY_NAME[name], name)
 
             ttk.Button(row, text="Apply", command=apply_gender).pack(
                 side="left", padx=6)
