@@ -162,8 +162,8 @@
   {
    "hash": 31655289,
    "hash_hex": "0x01E30579",
-   "name": "npc_poi_elven_city_rogue_woman05",
-   "kind": "world",
+   "name": "Arrow-Proof Aubrix",
+   "kind": "npc",
    "internal": "npc_poi_elven_city_rogue_woman05"
   },
   {
@@ -504,7 +504,8 @@
   {
    "hash": 162818412,
    "hash_hex": "0x09B4696C",
-   "name": "Poi Elven City Rogue Guildleader Rift01 Relocated",
+    "name": "Poi Elven City Rogue Guildleader Rift01 Relocated",
+   "description":  "Giant Mushroom no NPC??",
    "kind": "world"
   },
   {
@@ -669,7 +670,7 @@
   {
    "hash": 239118090,
    "hash_hex": "0x0E40A70A",
-   "name": "prop_petstation_cat",
+   "name": "Cat Pillow",
    "kind": "world",
    "internal": "prop_petstation_cat"
   },
@@ -1321,7 +1322,7 @@
   {
    "hash": 472005249,
    "hash_hex": "0x1C223A81",
-   "name": "prop_base_petstation",
+   "name": "prop base petstation",
    "internal": "prop_base_petstation",
    "kind": "world"
   },
@@ -1464,7 +1465,7 @@
   {
    "hash": 524151242,
    "hash_hex": "0x1F3DE9CA",
-   "name": "env_furniture_baroque_throne01",
+   "name": "Throne of Faynore",
    "kind": "world",
    "internal": "env_furniture_baroque_throne01"
   },
@@ -2092,11 +2093,12 @@
    "kind": "world"
   },
   {
-   "hash": 761837904,
-   "hash_hex": "0x2D68B950",
-   "name": "prop_portal_hand_activated02a",
-   "internal": "prop_portal_hand_activated02a",
-   "kind": "world"
+    "hash": 761837904,
+    "hash_hex": "0x2D68B950",
+    "name": "prop_portal_hand_activated02a",
+    "internal": "prop_portal_hand_activated02a",
+    "Description": "Seems to be a unused hand structure also there is no difference between any of them",
+    "kind": "world"
   },
   {
    "hash": 767276499,
@@ -2105,10 +2107,11 @@
    "kind": "world"
   },
   {
-   "hash": 770351895,
-   "hash_hex": "0x2DEAA317",
-   "name": "Rift Hollow Critter Caster Quest",
-   "kind": "world"
+    "hash": 770351895,
+    "hash_hex": "0x2DEAA317",
+    "name": "Hollow Imp Caster 260 Damage",
+    "internal": "Rift Hollow Critter Caster Quest",
+    "kind": "enemy"
   },
   {
    "hash": 774643410,
@@ -2682,11 +2685,11 @@
    "kind": "world"
   },
   {
-   "hash": 981346068,
-   "hash_hex": "0x3A7E2714",
-   "name": "prop_petstaion_mageguild_invisible_bacterium",
-   "internal": "prop_petstaion_mageguild_invisible_bacterium",
-   "kind": "world"
+    "hash": 981346068,
+    "hash_hex": "0x3A7E2714",
+    "name": "Golden Spore invisible Placed Pet",
+    "internal": "prop_petstaion_mageguild_invisible_bacterium",
+    "kind": "world"
   },
   {
    "hash": 985444101,
@@ -2897,8 +2900,8 @@
   {
    "hash": 1055758596,
    "hash_hex": "0x3EED9904",
-   "name": "_merchant_island_asteroid",
-   "kind": "world",
+   "name": "Island Merchant Dina",
+   "kind": "npc",
    "internal": "_merchant_island_asteroid"
   },
   {
@@ -3021,8 +3024,8 @@
   {
    "hash": 1095625496,
    "hash_hex": "0x414DEB18",
-   "name": "npc_wizard02_craft",
-   "kind": "npc",
+   "name": "Telescope?",
+   "kind": "world",
    "internal": "npc_wizard02_craft"
   },
   {
@@ -3747,15 +3750,16 @@
   {
    "hash": 1369554403,
    "hash_hex": "0x51A1BDE3",
-   "name": "npc_villager_pirate_bar01",
-   "kind": "world",
+   "name": "Thirsty Joe",
+   "kind": "npc",
    "internal": "npc_villager_pirate_bar01"
   },
   {
-   "hash": 1371672779,
-   "hash_hex": "0x51C210CB",
-   "name": "Quest Poi Elven City Elven Leader01",
-   "kind": "world"
+    "hash": 1371672779,
+    "hash_hex": "0x51C210CB",
+    "name": "Wyreth Ol'Faron",
+    "internal": "Quest Poi Elven City Elven Leader01",
+    "kind": "quest"
   },
   {
    "hash": 1378241397,
@@ -3954,7 +3958,7 @@
   {
    "hash": 1445656810,
    "hash_hex": "0x562AF8EA",
-   "name": "prop_trophy_giant_skeleton_hound_master_quality03",
+   "name": "Knight Hunter Trophy Gold",
    "internal": "prop_trophy_giant_skeleton_hound_master_quality03",
    "kind": "world"
   },
@@ -4112,11 +4116,12 @@
    "kind": "world"
   },
   {
-   "hash": 1505673176,
-   "hash_hex": "0x59BEBFD8",
-   "name": "Npc Special04 Saved",
-   "kind": "world",
-   "internal": "Npc Special04 Saved"
+    "hash": 1505673176,
+    "hash_hex": "0x59BEBFD8",
+    "name": "Npc Special04 Saved",
+    "kind": "npc",
+    "description": "Doesnt seem to spawn",
+    "internal": "Npc Special04 Saved"
   },
   {
    "hash": 1506437479,
@@ -4140,18 +4145,18 @@
    "internal": "prop_arena_barricate_02"
   },
   {
-   "hash": 1512242345,
-   "hash_hex": "0x5A22FCA9",
-   "name": "prop_trophy_giant_skeleton_hound_master_quality02",
-   "internal": "prop_trophy_giant_skeleton_hound_master_quality02",
-   "kind": "world"
+    "hash": 1512242345,
+    "hash_hex": "0x5A22FCA9",
+    "name": "Knight Hunter Trophy Iron",
+    "internal": "prop_trophy_giant_skeleton_hound_master_quality02",
+    "kind": "world"
   },
   {
-   "hash": 1514281645,
-   "hash_hex": "0x5A421AAD",
-   "name": "Big Green Present",
-   "kind": "world",
-   "internal": "prop_light_invisible_big_green"
+    "hash": 1514281645,
+    "hash_hex": "0x5A421AAD",
+    "name": "prop_light_invisible_big_green",
+    "kind": "world",
+    "internal": "prop_light_invisible_big_green"
   },
   {
    "hash": 1514460445,
@@ -4223,10 +4228,11 @@
    "internal": "potted_bush_step1"
   },
   {
-   "hash": 1542897884,
-   "hash_hex": "0x5BF6C0DC",
-   "name": "Rift Hollow Critter Melee Quest",
-   "kind": "world"
+    "hash": 1542897884,
+    "hash_hex": "0x5BF6C0DC",
+    "name": "Rift Imp Shield Melee",
+    "internal": "Rift Hollow Critter Melee Quest",
+    "kind": "enemy"
   },
   {
    "hash": 1543213217,
@@ -4248,11 +4254,12 @@
    "kind": "world"
   },
   {
-   "hash": 1544472762,
-   "hash_hex": "0x5C0EC8BA",
-   "name": "prop_teaser_portal_dlc_gate_01",
-   "internal": "prop_teaser_portal_dlc_gate_01",
-   "kind": "world"
+    "hash": 1544472762,
+    "hash_hex": "0x5C0EC8BA",
+    "name": "Huge Inactive Portal",
+    "internal": "prop_teaser_portal_dlc_gate_01",
+    "Description": "Huge Scaled portal",
+    "kind": "world"
   },
   {
    "hash": 1545704620,
@@ -4743,11 +4750,11 @@
    "kind": "world"
   },
   {
-   "hash": 1723659248,
-   "hash_hex": "0x66BCF3F0",
-   "name": "prop_petstation_rangerguild_invisible_cats_empty",
-   "internal": "prop_petstation_rangerguild_invisible_cats_empty",
-   "kind": "world"
+    "hash": 1723659248,
+    "hash_hex": "0x66BCF3F0",
+    "name": "Placed Cats invisible block",
+    "internal": "prop_petstation_rangerguild_invisible_cats_empty",
+    "kind": "world"
   },
   {
    "hash": 1724248825,
@@ -4900,8 +4907,8 @@
   {
    "hash": 1782537535,
    "hash_hex": "0x6A3F5D3F",
-   "name": "npc_poi_elven_city_astronomer",
-   "kind": "world",
+   "name": "Dr. Stellamaris",
+   "kind": "Trader",
    "internal": "npc_poi_elven_city_astronomer"
   },
   {
@@ -4942,8 +4949,8 @@
   {
    "hash": 1804321820,
    "hash_hex": "0x6B8BC41C",
-   "name": "npc_quest_poi_pirate01",
-   "kind": "world",
+   "name": "Captain Rattlepike",
+   "kind": "trader",
    "internal": "npc_quest_poi_pirate01"
   },
   {
@@ -5001,11 +5008,12 @@
    "internal": "prop_workbench_01"
   },
   {
-   "hash": 1825201013,
-   "hash_hex": "0x6CCA5B75",
-   "name": "npc_poi_elven_city_elder01",
-   "kind": "world",
-   "internal": "npc_poi_elven_city_elder01"
+    "hash": 1825201013,
+    "hash_hex": "0x6CCA5B75",
+    "name": "Jilsara Ilsavor",
+    "kind": "quest",
+    "location": " Farran-Enore",
+    "internal": "npc_poi_elven_city_elder01"
   },
   {
    "hash": 1827260991,
@@ -5118,11 +5126,12 @@
    "kind": "world"
   },
   {
-   "hash": 1870147275,
-   "hash_hex": "0x6F782ECB",
-   "name": "npc_poi_elven_city_rogue_man06",
-   "kind": "world",
-   "internal": "npc_poi_elven_city_rogue_man06"
+    "hash": 1870147275,
+    "hash_hex": "0x6F782ECB",
+    "name": "Laimbryl",
+    "kind": "npc",
+    "location": "Raven's Den",
+    "internal": "npc_poi_elven_city_rogue_man06"
   },
   {
    "hash": 1873442469,
@@ -5217,10 +5226,11 @@
    "kind": "world"
   },
   {
-   "hash": 1896910588,
-   "hash_hex": "0x71108EFC",
-   "name": "Poi Fortfinch Guard02",
-   "kind": "world"
+    "hash": 1896910588,
+    "hash_hex": "0x71108EFC",
+    "name": "Cleavon",
+    "internal": "Poi Fortfinch Guard02",
+    "kind": "quest"
   },
   {
    "hash": 1900940304,
@@ -5404,8 +5414,8 @@
   {
    "hash": 2003111408,
    "hash_hex": "0x77650DF0",
-   "name": "npc_poi_elven_city_rogue_man02_02",
-   "kind": "world",
+   "name": "Never-On-Time Norwald",
+   "kind": "npc",
    "internal": "npc_poi_elven_city_rogue_man02_02"
   },
   {
@@ -5771,8 +5781,8 @@
   {
    "hash": 2172293566,
    "hash_hex": "0x817A91BE",
-   "name": "npc_spectral_knights_standing_warrior05",
-   "kind": "world",
+   "name": "Arden The Audacious",
+   "kind": "npc",
    "internal": "npc_spectral_knights_standing_warrior05"
   },
   {
@@ -5896,8 +5906,8 @@
   {
    "hash": 2201542488,
    "hash_hex": "0x8338DF58",
-   "name": "npc_spectral_knights_encounter07",
-   "kind": "world",
+   "name": "Spectral Apparition 07",
+   "kind": "npc",
    "internal": "npc_spectral_knights_encounter07"
   },
   {
@@ -6020,10 +6030,11 @@
    "internal": "prop_rift_end_portal_rift03_loser"
   },
   {
-   "hash": 2250716687,
-   "hash_hex": "0x8627360F",
-   "name": "Activated Portal",
-   "kind": "world"
+    "hash": 2250716687,
+    "hash_hex": "0x8627360F",
+    "name": "Activated Portal",
+    "Description": "doesnt seem to work",
+    "kind": "world"
   },
   {
    "hash": 2252541602,
@@ -6042,8 +6053,8 @@
   {
    "hash": 2257252347,
    "hash_hex": "0x868AEFFB",
-   "name": "npc_poi_merchant_pirate_doll",
-   "kind": "world",
+   "name": "Larimore",
+   "kind": "npc",
    "internal": "npc_poi_merchant_pirate_doll"
   },
   {
@@ -6152,7 +6163,7 @@
   {
    "hash": 2297962249,
    "hash_hex": "0x88F81F09",
-   "name": "npc_quest_smelter04",
+   "name": "Wallace The Smelter",
    "kind": "world",
    "internal": "npc_quest_smelter04"
   },
@@ -6480,8 +6491,8 @@
   {
    "hash": 2407643406,
    "hash_hex": "0x8F81B90E",
-   "name": "npc_quest_pirate_senior01",
-   "kind": "world",
+   "name": "Paulsgrave",
+   "kind": "npc",
    "internal": "npc_quest_pirate_senior01"
   },
   {
@@ -6521,8 +6532,8 @@
   {
    "hash": 2418676196,
    "hash_hex": "0x902A11E4",
-   "name": "npc_poi_merchant_pirate_carpenter",
-   "kind": "world",
+   "name": "Mary",
+   "kind": "trader",
    "internal": "npc_poi_merchant_pirate_carpenter"
   },
   {
@@ -6724,8 +6735,8 @@
   {
    "hash": 2495565815,
    "hash_hex": "0x94BF4FF7",
-   "name": "npc_quest_poi_elven_city_rogue_guildleader01",
-   "kind": "world",
+   "name": "Anania Ol'Faron",
+   "kind": "quest",
    "internal": "npc_quest_poi_elven_city_rogue_guildleader01"
   },
   {
@@ -6796,10 +6807,11 @@
    "internal": "prop_triggered_platform_hidden"
   },
   {
-   "hash": 2514193589,
-   "hash_hex": "0x95DB8CB5",
-   "name": "Poi Fortfinch Prisoner01",
-   "kind": "world"
+    "hash": 2514193589,
+    "hash_hex": "0x95DB8CB5",
+    "name": "Arietta",
+    "kind": "quest",
+    "internal": "Poi Fortfinch Prisoner01"
   },
   {
    "hash": 2516236580,
@@ -6981,8 +6993,8 @@
   {
    "hash": 2571783556,
    "hash_hex": "0x994A4D84",
-   "name": "npc_poi_elven_city_rogue_man07_riftguard",
-   "kind": "world",
+   "name": "Eldwix The Intern",
+   "kind": "npc",
    "internal": "npc_poi_elven_city_rogue_man07_riftguard"
   },
   {
@@ -7078,7 +7090,7 @@
   {
    "hash": 2626235760,
    "hash_hex": "0x9C892D70",
-   "name": "prop_petstation_bird",
+   "name": "Bird Cage",
    "kind": "world",
    "internal": "prop_petstation_bird"
   },
@@ -7303,7 +7315,7 @@
   {
    "hash": 2708579770,
    "hash_hex": "0xA171A5BA",
-   "name": "npc_quest_knight04_craft",
+   "name": "Monroe The Knight",
    "kind": "world",
    "internal": "npc_quest_knight04_craft"
   },
@@ -7648,7 +7660,7 @@
   {
    "hash": 2838670179,
    "hash_hex": "0xA932AB63",
-   "name": "prop_petstation_dog",
+   "name": "Dog House",
    "kind": "world",
    "internal": "prop_petstation_dog"
   },
@@ -7762,10 +7774,11 @@
    "kind": "world"
   },
   {
-   "hash": 2867101176,
-   "hash_hex": "0xAAE47DF8",
-   "name": "Poi Arena Entry Historian01",
-   "kind": "world"
+    "hash": 2867101176,
+    "hash_hex": "0xAAE47DF8",
+    "name": "Humblesnoot",
+    "internal": "Poi Arena Entry Historian01",
+    "kind": "npc"
   },
   {
    "hash": 2873086961,
@@ -7847,8 +7860,8 @@
   {
    "hash": 2900658960,
    "hash_hex": "0xACE48B10",
-   "name": "npc_poi_arena_entry_officer02",
-   "kind": "world",
+   "name": "Proudcoat",
+   "kind": "npc",
    "internal": "npc_poi_arena_entry_officer02"
   },
   {
@@ -7999,8 +8012,8 @@
   {
    "hash": 2935406326,
    "hash_hex": "0xAEF6BEF6",
-   "name": "npc_poi_merchant_arena_entry_traps",
-   "kind": "world",
+   "name": "Andrew",
+   "kind": "trader",
    "internal": "npc_poi_merchant_arena_entry_traps"
   },
   {
@@ -8303,8 +8316,8 @@
   {
    "hash": 3056106604,
    "hash_hex": "0xB6287C6C",
-   "name": "npc_poi_arena_entry_man02",
-   "kind": "world",
+   "name": "High Pitch",
+   "kind": "npc",
    "internal": "npc_poi_arena_entry_man02"
   },
   {
@@ -8555,10 +8568,11 @@
    "internal": "prop_workbench_02"
   },
   {
-   "hash": 3141314737,
-   "hash_hex": "0xBB3CA8B1",
-   "name": "Poi Merchant Fortfinch Dress",
-   "kind": "world"
+    "hash": 3141314737,
+    "hash_hex": "0xBB3CA8B1",
+    "name": "Ysmay",
+    "internal": "Poi Merchant Fortfinch Dress",
+    "kind": "trader"
   },
   {
    "hash": 3147951702,
@@ -8874,7 +8888,7 @@
   {
    "hash": 3255075072,
    "hash_hex": "0xC2048100",
-   "name": "npc_spectral_knights_encounter02",
+   "name": "Spectral Apparition 02",
    "kind": "npc",
    "internal": "npc_spectral_knights_encounter02"
   },
@@ -9061,7 +9075,7 @@
   {
    "hash": 3325155686,
    "hash_hex": "0xC631D966",
-   "name": "spawner_pet_cage01",
+   "name": "Tree Stump",
    "kind": "world",
    "internal": "spawner_pet_cage01"
   },
@@ -9183,10 +9197,11 @@
    "kind": "world"
   },
   {
-   "hash": 3383160218,
-   "hash_hex": "0xC9A6ED9A",
-   "name": "Petmerchant01",
-   "kind": "npc"
+    "hash": 3383160218,
+    "hash_hex": "0xC9A6ED9A",
+    "name": "Petmerchant01",
+    "kind": "npc",
+    "description": "doesnt seem to spawn"
   },
   {
    "hash": 3385113292,
@@ -9437,7 +9452,7 @@
   {
    "hash": 3460521942,
    "hash_hex": "0xCE435FD6",
-   "name": "pet_placed_owl",
+   "name": "Pet Placed Owl",
    "kind": "world",
    "internal": "pet_placed_owl"
   },
@@ -10905,7 +10920,7 @@
   {
    "hash": 4015223944,
    "hash_hex": "0xEF537488",
-   "name": "cage_pet_owl",
+   "name": "caged pet white owl",
    "kind": "world",
    "internal": "cage_pet_owl"
   },
