@@ -9486,6 +9486,303 @@ class App(tk.Tk):
                 side="right")
 
 
+        def change_crates_to_npcs():
+            """Replace every crate with a different npc/quest/trader template."""
+            CRATE_CRC = 0x5B83845E
+
+            # Collect the crates currently shown in the spawn list.
+            crates = []
+            for iid in tree.get_children(""):
+                data = row_data.get(iid)
+                if not data:
+                    continue
+                npc = data.get("npc") or {}
+                tmpl = npc.get("template")
+                if tmpl is None:
+                    continue
+                try:
+                    crc = int(tmpl) & 0xFFFFFFFF
+                except (TypeError, ValueError):
+                    continue
+                if crc == CRATE_CRC:
+                    crates.append((iid, data))
+
+            if not crates:
+                messagebox.showinfo(
+                    "No crates",
+                    "No crates with TemplateCRC 0x%08X were found." % CRATE_CRC,
+                    parent=dlg)
+                return
+
+            # Read pk_templates.json directly.  Only npc/quest/trader entries
+            # are candidates.  Keep JSON order and remove duplicate CRCs.
+            json_candidates = [
+                os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "pk_templates.json"),
+                os.path.join(os.getcwd(), "pk_templates.json"),
+                os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "pk_templates(3).json"),
+            ]
+            json_path = next(
+                (p for p in json_candidates if os.path.isfile(p)), None)
+            if not json_path:
+                messagebox.showerror(
+                    "pk_templates.json not found",
+                    "Put pk_templates.json beside the program.",
+                    parent=dlg)
+                return
+
+            try:
+                with open(json_path, "r", encoding="utf-8-sig") as fh:
+                    raw = json.load(fh)
+            except Exception as ex:
+                messagebox.showerror(
+                    "pk_templates.json",
+                    "Could not read file:\n\n%s" % ex, parent=dlg)
+                return
+
+            records = raw.get("templates", []) if isinstance(raw, dict) else raw
+            templates = []
+            seen = set()
+            counts = {"npc": 0, "quest": 0, "trader": 0}
+
+            for rec in records or []:
+                if not isinstance(rec, dict):
+                    continue
+                kind_name = str(rec.get("kind") or "").strip().lower()
+                if kind_name not in ("npc", "quest", "trader"):
+                    continue
+
+                raw_crc = None
+                for field in ("hash", "template_crc", "templateCRC",
+                              "crc", "hash64"):
+                    if rec.get(field) is not None:
+                        raw_crc = rec.get(field)
+                        break
+                if raw_crc is None:
+                    continue
+
+                try:
+                    crc = (int(raw_crc, 0) if isinstance(raw_crc, str)
+                           else int(raw_crc)) & 0xFFFFFFFF
+                except (TypeError, ValueError):
+                    continue
+
+                if crc in seen:
+                    continue
+                seen.add(crc)
+
+                name = str(rec.get("name") or ("0x%08X" % crc))
+                templates.append((crc, name, kind_name))
+                counts[kind_name] += 1
+
+            if not templates:
+                messagebox.showerror(
+                    "No NPC templates",
+                    "pk_templates.json contains no kind=npc, quest, or trader "
+                    "templates.",
+                    parent=dlg)
+                return
+
+            # Assign templates without repeating one template until all
+            # templates have been used.  If there are more crates than
+            # templates, only then start the list again.
+            assignments = [
+                (crate, templates[i % len(templates)])
+                for i, crate in enumerate(crates)
+            ]
+
+            preview = []
+            for i, ((_iid, _data), (crc, name, kind_name)) in enumerate(
+                    assignments[:15], 1):
+                preview.append(
+                    "%d. %s [%s] 0x%08X" %
+                    (i, name, kind_name, crc))
+            if len(assignments) > 15:
+                preview.append(
+                    "... plus %d more crate(s)" % (len(assignments) - 15))
+
+            self.log(
+                "Crates -> NPC: %d crates; %d templates "
+                "(npc=%d quest=%d trader=%d)" %
+                (len(crates), len(templates),
+                 counts["npc"], counts["quest"], counts["trader"]))
+
+            if not messagebox.askyesno(
+                    "Crates → NPCs",
+                    ("Found %d crate(s).\n\n"
+                     "Loaded %d npc/quest/trader templates.\n\n"
+                     "Every crate gets a different template until all "
+                     "templates have been used; then the list repeats.\n\n"
+                     "First assignments:\n%s\n\n"
+                     "A .bak is made before writing.") %
+                    (len(crates), len(templates), "\n".join(preview)),
+                    parent=dlg):
+                return
+
+            self.savefile_path.set(path)
+            self._update_file_info_label()
+
+            # Group edits by BKCK entry.
+            # IMPORTANT: TemplateCRC is fixed-width, so changing it does NOT
+            # change the size or offsets of any BKCK entry.  Keep the original
+            # parsed BSON for each BKCK instead of reloading/re-parsing it.
+            # The previous versions were reloading the wrong/empty document
+            # for two entries, which produced fresh entities=0.
+            groups = {}
+            for crate, assignment in assignments:
+                _iid, data = crate
+                e = data.get("e")
+                if not e:
+                    continue
+                entry_id = e.get("id")
+                groups.setdefault(entry_id, []).append((data, assignment))
+
+            ok_n = 0
+            fail = []
+
+            # The original scan already proved that these entries parse and
+            # contain the crate entities.  Save that exact parsed document.
+            original_by_id = {}
+            for e0, doc0, kind0, nodes0, container0 in scanned:
+                original_by_id.setdefault(e0.get("id"),
+                                           (e0, doc0, kind0, nodes0))
+
+            for entry_id, group in groups.items():
+                try:
+                    original = original_by_id.get(entry_id)
+                    if original is None:
+                        raise RuntimeError("BKCK entry %s was not in initial scan" % entry_id)
+
+                    e0, doc0, kind0, nodes0 = original
+                    entities = list(iter_entities(nodes0))
+                    fresh_crates = []
+                    for idx, ent in enumerate(entities):
+                        crc = _entity_template_crc(ent)
+                        pos = _entity_position(ent)
+                        if crc is not None and (int(crc) & 0xFFFFFFFF) == CRATE_CRC:
+                            fresh_crates.append((idx, pos, ent))
+
+                    self.log(
+                        "RELOCATE DEBUG BKCK %s: using ORIGINAL parsed BSON; "
+                        "entities=%d crates=%d entry_index=%s size=%s tag=%r" %
+                        (entry_id, len(entities), len(fresh_crates),
+                         e0.get("index"), e0.get("size"), e0.get("tag")))
+
+                    if not fresh_crates:
+                        raise RuntimeError(
+                            "initial scan has no crate entities in BKCK %s" % entry_id)
+
+                    # Because TemplateCRC is fixed-width, entity/node offsets
+                    # remain valid across earlier BKCK writes.  No coordinate
+                    # re-location is needed at all. Match each requested crate
+                    # against the original crate rows by position, then patch
+                    # that exact node.
+                    used_targets = set()
+                    edits = []
+                    edit_info = []
+
+                    for data, (new_crc, new_name, new_kind) in group:
+                        target_pos = (data.get("npc") or {}).get("pos")
+                        target = None
+                        target_idx = None
+
+                        # Exact XYZ, then XZ, then nearest crate within a small
+                        # tolerance. All candidates must still be the crate CRC.
+                        for mode in ("xyz", "xz"):
+                            for idx, pos, ent in fresh_crates:
+                                if idx in used_targets or not pos or not target_pos:
+                                    continue
+                                if mode == "xyz":
+                                    good = all(abs(pos[j] - target_pos[j]) <= 0.05
+                                               for j in range(3))
+                                else:
+                                    good = (abs(pos[0] - target_pos[0]) <= 0.05 and
+                                            abs(pos[2] - target_pos[2]) <= 0.05)
+                                if not good:
+                                    continue
+                                for n in _walk([ent]):
+                                    if n.get("key") == "TemplateCRC":
+                                        try:
+                                            if (int(n.get("value")) & 0xFFFFFFFF) == CRATE_CRC:
+                                                target = n
+                                                target_idx = idx
+                                                break
+                                        except (TypeError, ValueError):
+                                            pass
+                                if target is not None:
+                                    break
+                            if target is not None:
+                                break
+
+                        # If position matching somehow fails, print useful
+                        # information instead of silently guessing.
+                        if target is None:
+                            self.log(
+                                "RELOCATE FAILURE BKCK %s target=%r; available crates:" %
+                                (entry_id, target_pos))
+                            for idx, pos, _ent in fresh_crates[:100]:
+                                self.log("  crate entity[%d] pos=%r" % (idx, pos))
+                            raise RuntimeError(
+                                "could not locate original crate at %s" %
+                                (target_pos,))
+
+                        used_targets.add(target_idx)
+                        edits.append((target, new_crc))
+                        edit_info.append(
+                            (target_pos, new_crc, new_name, new_kind, target_idx))
+
+                    if not edits:
+                        raise RuntimeError("no crate edits found")
+
+                    # self.container is updated by commit_bson_edits after each
+                    # successful BKCK. Since all edits are fixed-width, the
+                    # original doc/node offsets for OTHER BKCKs remain valid.
+                    # The NPC scan was performed from this exact container.
+                    # Do not use the app's previously loaded self.container here:
+                    # it may be a different save/container and therefore may not
+                    # contain this BKCK entry at all (which caused the previous
+                    # "target entry id not found" verification failure).
+                    # Keep the successfully updated container between groups so
+                    # earlier BKCK changes are not lost.
+                    if not any(ee.get("id") == e0.get("id")
+                               for ee in getattr(self.container, "entries", [])):
+                        self.container = container0
+
+                    if not self.commit_bson_edits(
+                            e0, doc0, kind0, edits,
+                            verify_label="Crates -> NPCs (%d edits)" % len(edits)):
+                        raise RuntimeError("write/verify failed")
+
+                    for target_pos, new_crc, new_name, new_kind, target_idx in edit_info:
+                        ok_n += 1
+                        self.log(
+                            "Crate -> %s TemplateCRC: 0x%08X -> 0x%08X "
+                            "(%s) entity[%d] at %s" %
+                            (new_kind, CRATE_CRC, new_crc, new_name, target_idx,
+                             ("(%.1f, %.1f, %.1f)" % target_pos)
+                             if target_pos else "?"))
+
+                except Exception as ex:
+                    fail.append("BKCK %s: %s" % (entry_id, ex))
+                    self.log(
+                        "Crates -> NPC FAILED for BKCK %s: %s" %
+                        (entry_id, ex))
+
+            summary = (
+                "Changed %d of %d crate(s) to NPC/quest/trader templates."
+                % (ok_n, len(crates)))
+            if fail:
+                summary += "\n\nFailed BKCK entries: %d\n%s" % (
+                    len(fail), "\n".join("  " + x for x in fail[:10]))
+                if len(fail) > 10:
+                    summary += "\n  ... and %d more" % (len(fail) - 10)
+
+            messagebox.showinfo(
+                "Crates → NPCs", summary, parent=dlg)
+            dlg.destroy()
+            self.open_world_npcs()
+
         def tag_island():
             """Record current island on selected (or all NPC) templates."""
             sel = tree.selection()
@@ -9533,6 +9830,8 @@ class App(tk.Tk):
                    command=replace_template).pack(side="left")
         ttk.Button(bf, text="Bulk assign from list…",
                    command=bulk_assign).pack(side="left", padx=4)
+        ttk.Button(bf, text="Crates → NPCs",
+                   command=change_crates_to_npcs).pack(side="left", padx=4)
         ttk.Button(bf, text="Tag island on NPCs",
                    command=tag_island).pack(side="left", padx=4)
         ttk.Button(bf, text="Copy selected",
@@ -12396,20 +12695,41 @@ class App(tk.Tk):
             target_id = e["id"]
 
             def verify_fn(check):
+                # Verify the actual bytes at the ORIGINAL BSON offsets first.
+                # TemplateCRC is fixed-width, so every edited node keeps the
+                # same vstart/vend offsets after the write. This avoids relying
+                # on BSON path reconstruction, which can be ambiguous for
+                # repeated EntityArray paths.
                 for ee, ddoc, kkind, eerr in iter_docs(check, self.dctx):
                     if ee["id"] != target_id or ddoc is None:
                         continue
-                    try:
-                        fresh_nodes, _ = bson_parse(ddoc)
-                    except Exception:
-                        return False
                     for node, new_value in applied:
-                        hit = bson_find(fresh_nodes, node["path"])
-                        if (hit is None
-                                or hit["value"] != node_expected_value(
-                                    node, new_value)):
+                        try:
+                            expected_bytes = bson_encode_scalar(node, new_value)
+                            actual_bytes = ddoc[node["vstart"]:node["vend"]]
+                        except Exception as vex:
+                            self.log(
+                                "VERIFY DEBUG %s: exception at %s: %s" %
+                                (verify_label, pretty_path(node["path"]), vex))
                             return False
+                        if actual_bytes != expected_bytes:
+                            self.log(
+                                "VERIFY DEBUG %s: MISMATCH path=%s "
+                                "offset=%s:%s expected=%s actual=%s "
+                                "expected_value=%r" %
+                                (verify_label, pretty_path(node["path"]),
+                                 node["vstart"], node["vend"],
+                                 expected_bytes.hex(), actual_bytes.hex(),
+                                 new_value))
+                            return False
+                    self.log(
+                        "VERIFY DEBUG %s: all %d TemplateCRC byte ranges "
+                        "match after write (entry id=%s)." %
+                        (verify_label, len(applied), target_id))
                     return True
+                self.log(
+                    "VERIFY DEBUG %s: target entry id=%s not found after write."
+                    % (verify_label, target_id))
                 return False
 
             ok, _check = self.write_container(
