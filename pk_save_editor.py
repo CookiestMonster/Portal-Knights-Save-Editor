@@ -8832,22 +8832,34 @@ class App(tk.Tk):
                     if key:
                         seen_pos.add(key)
                     npc_rows.append((e, npc, "npc", container, doc, kind))
+            # Every other entity with a TemplateCRC - props, pads, traps,
+            # spawners, anything - not just ones already in a name table.
+            # Previously this was gated behind ENEMY_TEMPLATE_CRCS/
+            # WORLD_TEMPLATES membership, but those tables are mostly
+            # empty right now, so almost nothing but true NPCs ever made
+            # it into this list. Replace-template only works on rows
+            # that show up here, so list everything and classify by
+            # whatever we actually know, with "other" as an honest
+            # fallback instead of silently dropping it.
             for o in extract_world_all_templates(nodes):
                 tmpl = o.get("template")
                 if tmpl is None:
                     continue
                 tcrc = int(tmpl) & 0xFFFFFFFF
-                if tcrc not in ENEMY_TEMPLATE_CRCS and tcrc not in WORLD_TEMPLATES:
-                    continue
-                if tcrc in NPC_TEMPLATES:
-                    continue
                 pos = o.get("pos")
                 key = (round(pos[0], 1), round(pos[2], 1)) if pos else None
                 if key and key in seen_pos:
-                    continue
+                    continue  # already listed as an NPC row
                 if key:
                     seen_pos.add(key)
-                tag = "enemy" if tcrc in ENEMY_TEMPLATE_CRCS else "world"
+                if tcrc in NPC_TEMPLATES:
+                    tag = "npc"
+                elif tcrc in ENEMY_TEMPLATE_CRCS:
+                    tag = "enemy"
+                elif tcrc in WORLD_TEMPLATES or tcrc in landing_pad_template_crcs():
+                    tag = "world"
+                else:
+                    tag = "other"
                 npc_rows.append((e, o, tag, container, doc, kind))
 
         dlg = tk.Toplevel(self)
@@ -8860,8 +8872,9 @@ class App(tk.Tk):
         dlg.geometry("900x520")
         ttk.Label(
             dlg,
-            text="%d spawn(s) on this island. NPCs only for copy/tag. "
-                 "TemplateCRC (test). Use a known NPC template."
+            text="%d spawn(s) on this island - NPCs, enemies, props, "
+                 "anything with a TemplateCRC. Replace works on any "
+                 "selected row(s); copy/tag are NPC-focused."
                  % len(npc_rows),
         ).pack(anchor="w", padx=8, pady=6)
         cols = ("idx", "name", "kind", "islands", "x", "y", "z", "text", "template", "chunk")
@@ -9001,29 +9014,39 @@ class App(tk.Tk):
         def replace_template():
             sel = tree.selection()
             if not sel:
-                messagebox.showinfo("Select", "Select one NPC / spawn row.",
-                                    parent=dlg)
+                messagebox.showinfo("Select", "Select one or more NPC / "
+                                    "spawn rows.", parent=dlg)
                 return
-            iid = sel[0]
-            data = row_data.get(iid)
-            if not data:
+            rows = []
+            for iid in sel:
+                data = row_data.get(iid)
+                if data:
+                    rows.append(data)
+            if not rows:
                 return
-            e = data["e"]
-            container = data["container"]
-            kind_tag = data["kind_tag"]
-            old_tmpl = data["npc"].get("template")
-            old_s = ("0x%08X" % (int(old_tmpl) & 0xFFFFFFFF)
-                     if old_tmpl is not None else "?")
+            # Header text: show the single row's current CRC, or a summary
+            # of how many distinct current templates are selected.
+            if len(rows) == 1:
+                old_tmpl = rows[0]["npc"].get("template")
+                old_s = ("0x%08X" % (int(old_tmpl) & 0xFFFFFFFF)
+                         if old_tmpl is not None else "?")
+                header = "Current: %s  (%s)" % (template_label(old_tmpl), old_s)
+            else:
+                distinct = {int(r["npc"].get("template")) & 0xFFFFFFFF
+                           for r in rows if r["npc"].get("template") is not None}
+                header = ("%d row(s) selected, %d distinct current "
+                         "template(s)" % (len(rows), len(distinct)))
 
             # Picker of known NPC templates (+ allow raw hex)
             pd = tk.Toplevel(dlg)
-            pd.title("Replace TemplateCRC")
+            pd.title("Replace TemplateCRC" if len(rows) == 1
+                     else "Replace TemplateCRC (%d rows)" % len(rows))
             pd.geometry("520x420")
             ttk.Label(
                 pd,
-                text="Current: %s  (%s)\n"
-                     "Pick a known NPC template, or type hex/decimal."
-                     % (template_label(old_tmpl), old_s),
+                text="%s\nPick a known NPC template, or type hex/decimal. "
+                     "Every selected row gets the same new template."
+                     % header,
             ).pack(anchor="w", padx=8, pady=6)
             qvar = tk.StringVar()
             ttk.Entry(pd, textvariable=qvar).pack(fill="x", padx=8, pady=4)
@@ -9035,7 +9058,9 @@ class App(tk.Tk):
                 lb.delete(0, "end")
                 del choices[:]
                 q = (qvar.get() or "").strip().lower()
-                items = sorted(NPC_TEMPLATES.items(),
+                # All known templates, not just NPC ones - a selected row
+                # could be a prop, pad, or anything else with a CRC.
+                items = sorted(all_known_templates().items(),
                                key=lambda kv: (kv[1] or "").lower())
                 for crc, name in items:
                     crc = int(crc) & 0xFFFFFFFF
@@ -9044,10 +9069,7 @@ class App(tk.Tk):
                             "%d" % crc):
                         continue
                     choices.append((crc, name or "?"))
-                    mark = "  ← current" if (
-                        old_tmpl is not None and
-                        (int(old_tmpl) & 0xFFFFFFFF) == crc) else ""
-                    lb.insert("end", label + mark)
+                    lb.insert("end", label)
                 if not choices and q:
                     # allow typed hex as custom
                     try:
@@ -9059,6 +9081,50 @@ class App(tk.Tk):
                         lb.insert("end", "custom 0x%08X (%d)" % (c, c))
                     except ValueError:
                         pass
+
+            def _replace_one(data, new_crc, new_name):
+                """Re-locate this row's entity fresh and patch its
+                TemplateCRC. Returns (ok, message)."""
+                e = data["e"]
+                container = data["container"]
+                kind_tag = data["kind_tag"]
+                target_pos = data["npc"].get("pos")
+                try:
+                    fresh_doc, fresh_kind = unwrap(
+                        container.chunk(e), self.dctx)
+                    fresh_nodes, _ = bson_parse(bytearray(fresh_doc))
+                except Exception as ex:
+                    return False, "reload failed: %s" % ex
+                target = None
+                for ent in iter_entities(fresh_nodes):
+                    pos = _entity_position(ent)
+                    if target_pos and pos:
+                        if (abs(pos[0] - target_pos[0]) > 0.05 or
+                                abs(pos[2] - target_pos[2]) > 0.05):
+                            continue
+                    elif target_pos:
+                        continue
+                    if kind_tag == "npc":
+                        has_npc = any(
+                            n["key"] == "NPC Control Component"
+                            for n in _walk([ent]))
+                        if not has_npc:
+                            continue
+                    for n in _walk([ent]):
+                        if n["key"] == "TemplateCRC" and n.get("value") is not None:
+                            target = n
+                            break
+                    if target is not None:
+                        break
+                if target is None:
+                    return False, "could not re-locate TemplateCRC"
+                ok = self.commit_bson_edit(
+                    e, fresh_doc, fresh_kind, target, new_crc)
+                if not ok:
+                    return False, "write/verify failed"
+                return True, "0x%08X -> 0x%08X (%s) at %s" % (
+                    int(target["value"]) & 0xFFFFFFFF, new_crc, new_name,
+                    ("(%.1f, %.1f, %.1f)" % target_pos) if target_pos else "?")
 
             def do_replace(_evt=None):
                 sel2 = lb.curselection()
@@ -9076,85 +9142,43 @@ class App(tk.Tk):
                             parent=pd)
                         return
                     new_name = template_label(new_crc)
-                if old_tmpl is not None and (
-                        int(old_tmpl) & 0xFFFFFFFF) == new_crc:
-                    messagebox.showinfo("Same", "Already that template.",
-                                        parent=pd)
-                    return
                 if not messagebox.askyesno(
                         "Confirm replace",
-                        "Replace TemplateCRC on this %s?\n\n"
-                        "  %s\n  →  %s  (0x%08X)\n\n"
-                        "A .bak of the world file is made first.\n\n"
+                        "Replace TemplateCRC on %d row(s)?\n\n"
+                        "  →  %s  (0x%08X)\n\n"
+                        "A .bak of the world file is made before the "
+                        "first write.\n\n"
                         "IMPORTANT: fully quit Portal Knights (not only\n"
                         "main menu) before loading this world, or the game\n"
                         "shows a save error until restart. Main menu still\n"
                         "keeps world data in memory."
-                        % (kind_tag,
-                           template_label(old_tmpl),
-                           new_name, new_crc),
+                        % (len(rows), new_name, new_crc),
                         parent=pd):
                     return
-                # Activate container and patch TemplateCRC in this entity
                 self.savefile_path.set(path)
-                self.container = container
                 self._update_file_info_label()
-                try:
-                    fresh_doc, fresh_kind = unwrap(
-                        container.chunk(e), self.dctx)
-                    fresh_nodes, _ = bson_parse(bytearray(fresh_doc))
-                except Exception as ex:
-                    messagebox.showerror("Reload failed", str(ex), parent=pd)
-                    return
-                # Locate TemplateCRC on the entity at the same position
-                target = None
-                target_pos = data["npc"].get("pos")
-                for ent in iter_entities(fresh_nodes):
-                    pos = _entity_position(ent)
-                    if target_pos and pos:
-                        if (abs(pos[0] - target_pos[0]) > 0.05 or
-                                abs(pos[2] - target_pos[2]) > 0.05):
-                            continue
-                    elif target_pos:
-                        continue
-                    # Prefer entities that still look like NPCs when replacing NPCs
-                    if kind_tag == "npc":
-                        has_npc = any(
-                            n["key"] == "NPC Control Component"
-                            for n in _walk([ent]))
-                        if not has_npc:
-                            continue
-                    for n in _walk([ent]):
-                        if n["key"] == "TemplateCRC" and n.get("value") is not None:
-                            target = n
-                            break
-                    if target is not None:
-                        break
-                if target is None:
-                    messagebox.showerror(
-                        "Not found",
-                        "Could not re-locate TemplateCRC for this spawn.",
-                        parent=pd)
-                    return
-                ok = self.commit_bson_edit(
-                    e, fresh_doc, fresh_kind, target, new_crc)
-                if ok:
-                    self.log(
-                        "NPC TemplateCRC %s → 0x%08X (%s) at (%.1f, %.1f, %.1f)"
-                        % (old_s, new_crc, new_name,
-                           *(target_pos or (0, 0, 0))))
-                    messagebox.showinfo(
-                        "Replaced",
-                        "TemplateCRC written and verified.\n"
-                        "0x%08X → 0x%08X (%s)\n\n"
-                        "Load the world in-game to test."
-                        % ((int(old_tmpl) & 0xFFFFFFFF) if old_tmpl else 0,
-                           new_crc, new_name),
-                        parent=pd)
-                    pd.destroy()
-                    dlg.destroy()
-                    # Re-open list so names refresh
-                    self.open_world_npcs()
+                ok_n = 0
+                fail = []
+                for data in rows:
+                    self.container = data["container"]
+                    ok, msg = _replace_one(data, new_crc, new_name)
+                    if ok:
+                        ok_n += 1
+                        self.log("NPC TemplateCRC replace: %s" % msg)
+                    else:
+                        fail.append((data, msg))
+                        self.log("NPC TemplateCRC replace FAILED: %s" % msg)
+                summary = "Replaced %d of %d row(s) -> 0x%08X (%s)." % (
+                    ok_n, len(rows), new_crc, new_name)
+                if fail:
+                    summary += "\n\nFailed:\n" + "\n".join(
+                        "  %s" % m for _d, m in fail[:8])
+                    if len(fail) > 8:
+                        summary += "\n  … and %d more" % (len(fail) - 8)
+                messagebox.showinfo("Replace done", summary, parent=pd)
+                pd.destroy()
+                dlg.destroy()
+                self.open_world_npcs()
 
             qvar.trace_add("write", refresh)
             lb.bind("<Double-1>", do_replace)
@@ -9518,6 +9542,9 @@ class App(tk.Tk):
         ttk.Button(bf, text="Collect all worlds → here…",
                    command=lambda: self.collect_npcs_into_world(path)).pack(
                        side="left", padx=4)
+        ttk.Button(bf, text="Add template…",
+                   command=lambda: self._open_add_template_dialog(
+                       dlg, path)).pack(side="left", padx=4)
         ttk.Button(bf, text="Close", command=dlg.destroy).pack(side="right")
 
 
@@ -9835,6 +9862,243 @@ class App(tk.Tk):
         messagebox.showinfo("Collect NPCs", msg)
         self.log("Collect NPCs: wrote %d unique NPCs into %s (file now has %d NPC Control)"
                  % (total_inserted, target_path, final_n))
+
+    def _open_add_template_dialog(self, parent_dlg, target_path):
+        """Picker over every known template (NPCs, props, pads, …) that
+        inserts one copy into target_path near the landing pad.
+
+        Reuses the exact same source-scan / position / insert machinery
+        as "Collect all worlds → here", just for one chosen template
+        instead of one-of-everything.
+        """
+        pd = tk.Toplevel(parent_dlg)
+        pd.title("Add template to world")
+        pd.geometry("560x440")
+        ttk.Label(
+            pd,
+            text="Pick a known template to insert a copy of into this "
+                 "world, or type a raw hex/decimal CRC. The source body "
+                 "is copied from wherever it was last seen on disk, since "
+                 "there's no way to build one from scratch.",
+            wraplength=530,
+        ).pack(anchor="w", padx=8, pady=6)
+        qvar = tk.StringVar()
+        ttk.Entry(pd, textvariable=qvar).pack(fill="x", padx=8, pady=4)
+        lb = tk.Listbox(pd, font=("Courier New", 9))
+        lb.pack(fill="both", expand=True, padx=8, pady=4)
+        choices = []  # list of (crc, label)
+
+        def refresh(*_a):
+            lb.delete(0, "end")
+            del choices[:]
+            q = (qvar.get() or "").strip().lower()
+            items = sorted(all_known_templates().items(),
+                           key=lambda kv: (kv[1] or "").lower())
+            for crc, name in items:
+                crc = int(crc) & 0xFFFFFFFF
+                label = "%-40s  0x%08X" % ((name or "?")[:40], crc)
+                if q and q not in label.lower() and q not in ("%d" % crc):
+                    continue
+                choices.append((crc, name or "?"))
+                lb.insert("end", label)
+            if not choices and q:
+                try:
+                    c = int(q, 16 if q.startswith("0x") else 10) & 0xFFFFFFFF
+                    choices.append((c, "custom 0x%08X" % c))
+                    lb.insert("end", "custom 0x%08X (%d)" % (c, c))
+                except ValueError:
+                    pass
+
+        qvar.trace_add("write", refresh)
+        refresh()
+
+        def do_add(_evt=None):
+            sel = lb.curselection()
+            if not sel:
+                return
+            crc, name = choices[sel[0]]
+            pd.destroy()
+            self._insert_template_into_world(target_path, crc, name)
+            parent_dlg.destroy()
+            self.open_world_npcs()
+
+        lb.bind("<Double-1>", do_add)
+        bf2 = ttk.Frame(pd)
+        bf2.pack(fill="x", padx=8, pady=6)
+        ttk.Button(bf2, text="Add", command=do_add).pack(side="left")
+        ttk.Button(bf2, text="Cancel", command=pd.destroy).pack(side="right")
+
+    def _insert_template_into_world(self, target_path, crc, label):
+        """Find one real body for `crc` anywhere on disk, place it near
+        the target world's landing pad (safe XZ band, same as Collect
+        NPCs), and insert it. One write, with backup + verify."""
+        crc = int(crc) & 0xFFFFFFFF
+        if not self._ensure_dict():
+            return
+
+        # --- find a real source body for this template ---
+        body = None
+        src_name = None
+        for row in getattr(self, "_all_saves", None) or find_saves():
+            info = row[4]
+            if info.get("type") != "world":
+                continue
+            wpath = row[3]
+            wname = info.get("location_name") or row[2] or wpath
+            try:
+                for e, doc, kind, nodes, _container in self._scan_world_bkck(wpath):
+                    for rec in extract_world_all_templates(nodes):
+                        if rec.get("template") != crc:
+                            continue
+                        ent = rec.get("entity")
+                        if not ent or ent.get("vstart") is None:
+                            continue
+                        body = bytes(doc[ent["vstart"]:ent["vend"]])
+                        src_name = wname
+                        break
+                    if body is not None:
+                        break
+            except Exception:
+                continue
+            if body is not None:
+                break
+
+        if body is None:
+            messagebox.showerror(
+                "No source found",
+                "0x%08X (%s) has never been seen on disk in any world "
+                "this tool has scanned, so there's no real entity body "
+                "to copy - a template can't be built from just a CRC."
+                % (crc, label))
+            return
+
+        if not messagebox.askyesno(
+                "Add template",
+                "Insert 1 copy of:\n\n  0x%08X  %s\n  (source: %s)\n\n"
+                "into:\n  %s\n\n"
+                "Position: near the landing pad, safe XZ band.\n"
+                "A .bak is made first. Continue?"
+                % (crc, label, src_name, target_path)):
+            return
+
+        try:
+            container = load_container(target_path)
+        except Exception as ex:
+            messagebox.showerror("Load failed", str(ex))
+            return
+        self.savefile_path.set(target_path)
+        self.container = container
+
+        # --- origin: landing pad, else median of existing entities ---
+        origin = None
+        pad_y = None
+        hosts = []
+        for e in container.entries:
+            if e.get("tag") != b"BKCK":
+                continue
+            try:
+                doc, kind = unwrap(container.chunk(e), self.dctx)
+                nodes, _ = bson_parse(bytearray(doc))
+            except Exception:
+                continue
+            for pad in extract_world_landing_pads(nodes):
+                if pad.get("pos"):
+                    origin = pad["pos"]
+                    pad_y = pad["pos"][1]
+            positions = [rec["pos"] for rec in extract_world_all_templates(nodes)
+                        if rec.get("pos")]
+            if positions and origin is None:
+                xs = sorted(p[0] for p in positions)
+                ys = sorted(p[1] for p in positions)
+                zs = sorted(p[2] for p in positions)
+                origin = (xs[len(xs)//2], ys[len(ys)//2], zs[len(zs)//2])
+            earr = None
+            for n in _walk(nodes):
+                if n.get("key") == "EntityArray" and n.get("children") is not None:
+                    earr = n
+                    break
+            if earr is not None:
+                hosts.append((e, len(earr.get("children") or [])))
+
+        if not hosts:
+            messagebox.showerror(
+                "No EntityArray",
+                "Target world has no EntityArray to insert into.")
+            return
+        hosts.sort(key=lambda h: h[1])  # emptiest first
+
+        if origin is None:
+            origin = (64.5, 60.0, 64.5)
+        ox, oy, oz = float(origin[0]), float(origin[1]), float(origin[2])
+        if pad_y is not None:
+            oy = float(pad_y)
+
+        width = height = depth = None
+        try:
+            width, height, depth = self._lookup_target_island_dims(target_path)
+        except Exception:
+            pass
+        if width or depth:
+            x_min, x_max, z_min, z_max = npc_safe_xz_band(width, depth)
+        else:
+            x_min = z_min = _NPC_SAFE_XZ_MIN
+            x_max = z_max = _NPC_SAFE_XZ_MAX
+        try:
+            max_layers = npc_max_layers(oy, height)
+        except Exception:
+            max_layers = None
+
+        (x, y, z), = _npc_grid_positions(
+            1, ox, oy, oz, x_min, x_max, z_min, z_max, max_layers)
+
+        host_entry, _n = hosts[0]
+        try:
+            doc, kind = unwrap(container.chunk(host_entry), self.dctx)
+        except Exception as ex:
+            messagebox.showerror("Unwrap failed", str(ex))
+            return
+        buf = bytearray(doc)
+        try:
+            nodes2, _ = bson_parse(buf)
+        except Exception as ex:
+            messagebox.showerror("Parse failed", str(ex))
+            return
+        earr2 = None
+        for n in _walk(nodes2):
+            if n.get("key") == "EntityArray" and n.get("children") is not None:
+                earr2 = n
+                break
+        if earr2 is None:
+            messagebox.showerror("No EntityArray", "Host chunk lost its "
+                                 "EntityArray between scan and write.")
+            return
+        next_idx = len(earr2.get("children") or [])
+        try:
+            body2 = _patch_entity_position_bytes(body, x, y, z)
+        except Exception as ex:
+            self.log("  position patch failed, using source position: %s" % ex)
+            body2 = body
+        blob = _encode_array_entity_element(next_idx, body2)
+        try:
+            bson_insert_element(buf, earr2, blob)
+            bson_parse(bytearray(buf))  # verify structure before writing
+        except Exception as ex:
+            messagebox.showerror("Insert failed", str(ex))
+            return
+        try:
+            self.write_container(
+                host_entry["id"], wrap(bytes(buf), kind, self.cctx),
+                verify_label="add template 0x%08X" % crc)
+        except Exception as ex:
+            messagebox.showerror("Write failed", str(ex))
+            return
+        self.log("Added template 0x%08X (%s) from %s -> (%.1f, %.1f, %.1f) "
+                 "in %s" % (crc, label, src_name, x, y, z, target_path))
+        messagebox.showinfo(
+            "Added",
+            "Inserted 0x%08X (%s) at (%.1f, %.1f, %.1f).\n\n"
+            "Fully quit Portal Knights (not just main menu) before "
+            "loading this world." % (crc, label, x, y, z))
 
 
 
@@ -15265,6 +15529,15 @@ class CharacterEditor(tk.Toplevel):
                 on_pick=lambda new_crc: self._add_recipe(recipe_bin, new_crc),
                 exclude=existing)
 
+        def add_all_known():
+            if recipe_bin is None:
+                messagebox.showinfo(
+                    "No field",
+                    "This character has no knownRecipeIds field to write.",
+                    parent=self)
+                return
+            self._add_all_known_recipes(recipe_bin)
+
         def remove_selected(_evt=None):
             if recipe_bin is None:
                 return
@@ -15314,6 +15587,8 @@ class CharacterEditor(tk.Toplevel):
             side="left")
         ttk.Button(btns, text="Add…", command=add_recipe).pack(
             side="left", padx=6)
+        ttk.Button(btns, text="Add all known…",
+                   command=add_all_known).pack(side="left", padx=6)
         ttk.Button(btns, text="Remove selected",
                    command=remove_selected).pack(side="left", padx=6)
         ttk.Button(btns, text="Name unmapped…",
@@ -15413,6 +15688,56 @@ class CharacterEditor(tk.Toplevel):
                 self.e, self.doc, self.kind, recipe_bin, blob):
             self.app.log("Added recipe 0x%08X (%s)" % (
                 new_crc, recipe_label_for_id(new_crc)))
+            self.reload()
+
+    def _add_all_known_recipes(self, recipe_bin):
+        """Unlock every recipe serial this tool has a name for - the
+        built-in seed table plus anything confirmed via "Name unmapped…"
+        and persisted to pk_recipe_id_names.json. One rebuild/write/
+        verify for the whole batch, same shape as "max all stacks",
+        instead of one write per recipe.
+        """
+        if not self._ensure_char_write_target():
+            return
+        known = recipe_id_names()  # built-in seed + pk_recipe_id_names.json
+        if not known:
+            messagebox.showinfo(
+                "No known recipes",
+                "No named recipe serials yet - pk_recipe_id_names.json "
+                "is empty and the built-in table has nothing either. "
+                "Use \"Name unmapped…\" to build this list up first.",
+                parent=self)
+            return
+        ids = parse_recipe_ids(recipe_bin["value"])
+        while ids and ids[-1] == 0:
+            ids.pop()
+        have = set(ids)
+        to_add = sorted(crc for crc in known if crc not in have)
+        if not to_add:
+            messagebox.showinfo(
+                "Nothing to add",
+                "Every named recipe (%d) is already unlocked." % len(known),
+                parent=self)
+            return
+        preview = "\n".join(
+            "0x%08X  %s" % (crc, known[crc]) for crc in to_add[:12])
+        if len(to_add) > 12:
+            preview += "\n… and %d more" % (len(to_add) - 12)
+        if not messagebox.askyesno(
+                "Add all known recipes",
+                "Add %d recipe(s) from pk_recipe_id_names.json that "
+                "aren't already unlocked?\n\n%s" % (len(to_add), preview),
+                parent=self):
+            return
+        ids.extend(to_add)
+        blob = self._pack_recipe_ids(ids)
+        if self.app.commit_bson_edit(
+                self.e, self.doc, self.kind, recipe_bin, blob):
+            self.app.log(
+                "Added %d known recipe(s) in one write: %s"
+                % (len(to_add),
+                   ", ".join("0x%08X" % c for c in to_add[:8])
+                   + ("…" if len(to_add) > 8 else "")))
             self.reload()
 
     def _remove_recipes_at(self, recipe_bin, indices_desc):
