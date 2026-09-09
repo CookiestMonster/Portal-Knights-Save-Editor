@@ -45,6 +45,7 @@ import shutil
 import struct
 import sys
 import threading
+import time
 import tkinter as tk
 from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
@@ -399,6 +400,22 @@ BLOCK_PROP_COLORS = {
     0x6890383A: "#40FFFF",  # moonstone
     0xEF57979B: "#57FFFF",  # electro core
     0xE9C11116: "#FF41FF",  # asteroid core
+}
+
+# Known player / island quest QIDs (from community / save dumps).
+# Multiple QIDs can map to the same display name when a quest uses
+# several graph nodes (e.g. Dress the Part has two).
+QUEST_QID_NAMES = {
+    0x5DA68595: "Basics",
+    0xD47403AA: "Cast the First Stone (Elise)",
+    0xDCE51FE3: "Mine a Stone Block by holding on it",
+    0x115C8A76: "Craft a Stone Pickaxe",
+    0x8420F542: "Dress the Part",
+    0xC748C0C3: "Dress the Part",  # second node (same quest; last step)
+    0xDAEFA916: "Portals (Rupert)",
+    0xDBAC80C0: "Into the Unknown (Rupert)",
+    0x6396F57C: "Leveling Up",
+    0xC1BE53E4: "Locked (unknown)",
 }
 
 _BUILTIN_ENEMY_CRCS = set()
@@ -2875,7 +2892,7 @@ _BLOCK_ROW_RIGHT = [
     (56,  "stone",                          "#8F8F93"),
     (28,  "large faynore stone",            "#67B7D4"),
     (113, "large white stone bricks",       "#FCF9F5"),
-    (103, "large stone bricks",             "#FFDA9F"),
+    (103, "large stone bricks",             "#6A7378"),
     (112, "small stone bricks",             "#8E8887"),
     (102, "small bright stone bricks",      "#B0B3B8"),
     (111, "basalt stone",                   "#435455"),
@@ -2886,8 +2903,8 @@ _BLOCK_ROW_RIGHT = [
     (99,  "red stone bricks",               "#AE5342"),
     (35,  "dark stone bricks",              "#595045"),
     (34,  "yellow stone bricks",            "#FFF8CA"),
-    (37,  "ruinstone",                      "#8D8C87"),
-    (36,  "studded ruinstone",              "#5D6063"),
+    (37,  "ruinstone",                      "#3E484B"),
+    (36,  "studded ruinstone",              "#28323A"),
     (68,  "marble",                         "#FCFFFF"),
     (64,  "polished marble",                "#FFFFA0"),
     (31,  "raw jade stone",                 "#41A453"),
@@ -3382,7 +3399,18 @@ def _collect_quest_entries(nodes, out, path=""):
 
 
 def decode_quest_blob(qb_binary):
-    """Decompress and parse the Quest Component QB field.
+    """Decompress and parse the Quest Component QB field (also used for
+    the universe file's per-island s_qu quest-state buffers, which are
+    the same format).
+
+    Some small quest-state payloads are stored as raw, uncompressed BSON
+    instead of SNPY-wrapped - confirmed on a real universe file where a
+    173-byte buffer's first 4 bytes (as an int32 LE) equal its own total
+    length, the signature of an unwrapped BSON document, and direct
+    parsing (skipping decompression) recovers a real quest entry that
+    _snappy_try otherwise fails on with "bad snappy copy offset".
+    Checking for this first - before assuming compression - is what
+    fixes that case without needing a separate code path per caller.
 
     Returns (ok, info_dict) where info_dict includes:
       raw_len, magic, decompressed_len, offset, quests (list of dicts),
@@ -3393,7 +3421,11 @@ def decode_quest_blob(qb_binary):
     raw = bytes(qb_binary)
     info = {"raw_len": len(raw), "magic": raw[:4], "quests": []}
     try:
-        dec, off = _snappy_try(raw)
+        if len(raw) >= 4 and struct.unpack_from("<i", raw, 0)[0] == len(raw):
+            dec, off = raw, 0
+            info["uncompressed"] = True
+        else:
+            dec, off = _snappy_try(raw)
         info["decompressed_len"] = len(dec)
         info["offset"] = off
         info["preview"] = dec[:64].hex()
@@ -3419,6 +3451,12 @@ def decode_quest_blob(qb_binary):
     except Exception as ex:
         info["error"] = str(ex)
         return False, info
+
+
+# Force-quest-state experiment removed: patching/inserting QS only works
+# for nodes the save already knows; the game re-evaluates preconditions
+# and island graph state on load, so unseen quests cannot be reliably
+# unlocked from the character QB alone.
 
 
 # Class-specific talent trees. selection index 0..n-1 matches the order
@@ -5136,6 +5174,102 @@ def island_location_from_entry_id(entry_id):
     return lo16, None
 
 
+def extract_universe_pthd_summary(nodes):
+    """Summarize PlanetHeaderData (PTHD) style nodes if present.
+
+    Returns a list of human-readable lines. Looks for common keys:
+    island bitfields, day/night, home/lastVisited, event slots, GUID/name.
+    0xFFFFFFFF / -1 treated as 'not set'.
+    """
+    lines = []
+    events = []
+    if not nodes:
+        return lines
+
+    def _fmt_val(v):
+        if v is None:
+            return "?"
+        if isinstance(v, int):
+            u = v & 0xFFFFFFFF if v >= 0 else v
+            if v == 0xFFFFFFFF or v == -1 or u == 0xFFFFFFFF:
+                return "not set (0xFFFFFFFF)"
+            if 0 <= v <= 0xFFFFFFFF:
+                return "%d (0x%X)" % (v, v & 0xFFFFFFFF)
+            return str(v)
+        if isinstance(v, float):
+            return "%.4g" % v
+        if isinstance(v, (bytes, bytearray)):
+            raw = bytes(v)
+            if len(raw) <= 32 and all(32 <= b < 127 or b == 0 for b in raw):
+                return raw.split(b"\x00")[0].decode("utf-8", "replace") or raw.hex()
+            return "<%d bytes>" % len(raw)
+        return str(v)
+
+    interesting = (
+        "name", "guid", "GUID", "dayTime", "day", "night", "timeOfDay",
+        "worldTime", "dayNight", "homeIsland", "lastVisitedIsland",
+        "lastVisited", "islandId", "clusterId", "eventHistory",
+        "gameplayMode", "seed", "eventId", "eventType", "eventTime",
+        "worldEvent", "history",
+    )
+    for n in _walk(nodes):
+        key = n.get("key") or ""
+        low = key.lower()
+        if key in interesting and n.get("children") is None:
+            lines.append("%s = %s" % (key, _fmt_val(n.get("value"))))
+        if low in ("islandstates", "islandstate", "activeislands",
+                   "islandbits", "bitfield") and n.get("value") is not None:
+            val = n.get("value")
+            if isinstance(val, (bytes, bytearray)):
+                lines.append("%s = <%d bytes bitfield>" % (key, len(val)))
+            else:
+                lines.append("%s = %s" % (key, _fmt_val(val)))
+        if key in ("lastVisitedIsland", "homeIsland") and n.get("children"):
+            parts = []
+            for ch in n["children"]:
+                if ch.get("children") is None:
+                    parts.append("%s=%s" % (ch.get("key"), _fmt_val(ch.get("value"))))
+            if parts:
+                lines.append("%s { %s }" % (key, ", ".join(parts)))
+        # World event history entries (array elements with event-ish fields)
+        if n.get("children") and any(
+                (c.get("key") or "").lower().find("event") >= 0
+                for c in n["children"]):
+            parts = []
+            unused = True
+            for ch in n["children"]:
+                if ch.get("children") is not None:
+                    continue
+                k = ch.get("key") or ""
+                v = ch.get("value")
+                parts.append("%s=%s" % (k, _fmt_val(v)))
+                if isinstance(v, int) and (v & 0xFFFFFFFF) not in (
+                        0xFFFFFFFF, 0):
+                    unused = False
+                if isinstance(v, str) and v.strip():
+                    unused = False
+            if parts and not unused:
+                events.append("{ %s }" % ", ".join(parts))
+            elif parts and unused and "event" in low:
+                events.append("{ %s }  [empty slot]" % ", ".join(parts[:4]))
+
+    if events:
+        lines.append("--- event history (%d non-empty-ish) ---" % sum(
+            1 for e in events if "empty slot" not in e))
+        for e in events[:40]:
+            lines.append("  %s" % e)
+        if len(events) > 40:
+            lines.append("  … +%d more" % (len(events) - 40))
+
+    seen = set()
+    out = []
+    for ln in lines:
+        if ln not in seen:
+            seen.add(ln)
+            out.append(ln)
+    return out
+
+
 def extract_island_seed_and_size(doc):
     """Best-effort seed / size readout from IslandHeaderData (ILHD).
 
@@ -5469,6 +5603,19 @@ def _iter_all(nodes):
                 yield c
 
 
+from collections import namedtuple
+
+# Return type of App._scan_world_map_data() - the pure-data half of
+# open_world_map, extracted out so the dense terrain/pad-alignment
+# heuristics in it are a separately readable, callable unit instead of
+# being inline in the middle of a 1700+ line GUI function.
+WorldMapData = namedtuple("WorldMapData", [
+    "chests", "signs", "npcs", "pads", "others", "scanned",
+    "terrain_chunks", "terrain_origin", "terrain_heightmap",
+    "swap_axes", "terrain_clip", "terrain_trusted",
+    "min_x", "max_x", "min_z", "max_z", "world_w", "world_h",
+])
+
 
 class App(tk.Tk):
     def __init__(self):
@@ -5799,6 +5946,10 @@ class App(tk.Tk):
             world_actions2, text="Inventories…",
             command=self.open_world_chests)
         self.world_inv_btn.pack(side="left")
+        self.world_analysis_btn = ttk.Button(
+            world_actions2, text="Analysis…",
+            command=self.open_world_analysis)
+        self.world_analysis_btn.pack(side="left", padx=4)
         self.world_signs_btn = ttk.Button(
             world_actions2, text="Signs…", command=self.open_world_signs)
         self.world_signs_btn.pack(side="left", padx=4)
@@ -6851,8 +7002,12 @@ class App(tk.Tk):
         search_fr.pack(fill="x", padx=8)
         ttk.Label(search_fr, text="Filter:").pack(side="left")
         fvar = tk.StringVar()
-        ttk.Entry(search_fr, textvariable=fvar, width=28).pack(
-            side="left", padx=4)
+        fentry = ttk.Entry(search_fr, textvariable=fvar, width=28)
+        fentry.pack(side="left", padx=4)
+        dlg.bind("<Control-f>", lambda _e: (
+            fentry.focus_set(), fentry.selection_range(0, "end")))
+        dlg.bind("<Control-F>", lambda _e: (
+            fentry.focus_set(), fentry.selection_range(0, "end")))
 
         cols = ("hex", "dec", "name", "kind", "source")
         tree = ttk.Treeview(dlg, columns=cols, show="headings", height=14)
@@ -7350,7 +7505,7 @@ class App(tk.Tk):
             os.replace(tmp, path)
         except Exception as ex:
             messagebox.showerror("Write failed", str(ex))
-            return
+            return False
 
         size_after = 0
         try:
@@ -7588,6 +7743,219 @@ class App(tk.Tk):
             except Exception:
                 continue
             yield e, doc, kind, nodes, container
+
+    def open_world_analysis(self):
+        """Stats for the selected world: chests, items, props, seed, universe."""
+        path, info = self._resolve_world_path()
+        if not path:
+            messagebox.showinfo(
+                "No world",
+                "Select a world file first (filter → Worlds, or the Worlds tab).")
+            return
+        if not self._ensure_dict():
+            return
+        try:
+            scanned = list(self._scan_world_bkck(path))
+        except Exception as exc:
+            messagebox.showerror("Save file error", str(exc))
+            return
+
+        from collections import Counter
+        chest_count = 0
+        inv_entity_count = 0
+        prop_count = 0
+        item_total = 0
+        unique_crcs = set()
+        non_max = []
+        kind_counts = Counter()
+
+        for e, doc, kind, nodes, container in scanned:
+            if b"Server Inventory Component" in doc:
+                for chest in extract_world_chests(nodes):
+                    inv_entity_count += 1
+                    kl, _c = classify_inventory_entity(chest)
+                    kind_counts[kl] += 1
+                    if kl == "chest":
+                        chest_count += 1
+                    for arr in chest.get("invs") or []:
+                        for _si, entry in inventory_slot_map(arr).items():
+                            fields = item_entry_fields(entry)
+                            ii = fields.get("II")
+                            sc = fields.get("SC")
+                            if not ii:
+                                continue
+                            crc = int(ii["value"]) & 0xFFFFFFFF
+                            stack = int(sc["value"]) if sc is not None else 1
+                            unique_crcs.add(crc)
+                            item_total += stack
+                            cap = item_max_stack(crc)
+                            if 0 < stack < cap:
+                                nm = item_name_for_crc(crc) or ("0x%08X" % crc)
+                                non_max.append((nm, crc, stack, cap))
+            for o in extract_world_all_templates(nodes):
+                if o.get("template") is not None:
+                    prop_count += 1
+
+        seed_info = {}
+        univ_lines = []
+        try:
+            rows = getattr(self, "_all_saves", None) or find_saves()
+            target_row = next((r for r in rows if r[3] == path), None)
+            u_slot = info.get("universe")
+            u_root = target_row[1] if target_row else None
+            u_community = info.get("community")
+            for row in rows:
+                uinfo = row[4]
+                if (uinfo.get("type") != "universe"
+                        or uinfo.get("universe") != u_slot
+                        or uinfo.get("community") != u_community
+                        or (u_root is not None and row[1] != u_root)):
+                    continue
+                try:
+                    uc = load_container(row[3])
+                except Exception:
+                    continue
+                for e in uc.entries:
+                    tag = e.get("tag")
+                    if tag not in (b"USHD", b"PTHD", b"ILHD"):
+                        continue
+                    try:
+                        docu, _k = unwrap(uc.chunk(e), self.dctx)
+                    except Exception:
+                        continue
+                    if not docu:
+                        continue
+                    if tag == b"ILHD":
+                        loc, _nm = island_location_from_entry_id(e["id"])
+                        if info.get("location") is not None and loc == info["location"]:
+                            seed_info = extract_island_seed_and_size(docu) or seed_info
+                        continue
+                    try:
+                        nodes_u, _ = bson_parse(bytearray(docu))
+                    except Exception:
+                        nodes_u = []
+                    if tag == b"USHD":
+                        univ_lines.append("--- USHD ---")
+                        nm = extract_universe_name(docu)
+                        mode = extract_universe_gameplay_mode(docu)
+                        if nm:
+                            univ_lines.append("name = %s" % nm)
+                        if mode:
+                            univ_lines.append("gameplayMode = %s" % mode)
+                        univ_lines.extend(extract_universe_pthd_summary(nodes_u))
+                    elif tag == b"PTHD":
+                        univ_lines.append("--- PTHD (id %s) ---" % e.get("id"))
+                        univ_lines.extend(extract_universe_pthd_summary(nodes_u))
+                break
+        except Exception as ex:
+            univ_lines.append("(universe read error: %s)" % ex)
+
+        if not hasattr(self, "_universe_meta"):
+            self._universe_meta = {}
+        wname = resolve_world_display_name(
+            info, universe_meta=self._universe_meta, dctx=self.dctx,
+            save_rows=getattr(self, "_all_saves", None))
+
+        dlg = tk.Toplevel(self)
+        dlg.title("World analysis — %s" % wname)
+        dlg.geometry("720x560")
+        text = tk.Text(dlg, wrap="word", font=("Courier New", 10))
+        text.pack(fill="both", expand=True, padx=8, pady=8)
+        lines = []
+        lines.append("World: %s" % wname)
+        lines.append("File:  %s" % path)
+        lines.append("")
+        lines.append("=== Entities ===")
+        lines.append("Inventory entities: %d" % inv_entity_count)
+        lines.append("  of which kind=chest: %d" % chest_count)
+        for k, n in sorted(kind_counts.items()):
+            lines.append("  kind=%-14s %d" % (k, n))
+        lines.append("Props / TemplateCRC entities: %d" % prop_count)
+        lines.append("")
+        # Missing = placeable table hashes not present in any chest/inv
+        table_placeable = []
+        for rec in item_table() or []:
+            if not item_is_placeable(rec):
+                continue
+            h = _as_u32(rec.get("hash"))
+            if h is None:
+                continue
+            table_placeable.append((h, rec.get("name") or "?",
+                                    rec.get("category") or ""))
+        missing = [(h, nm, cat) for h, nm, cat in table_placeable
+                   if h not in unique_crcs]
+        missing.sort(key=lambda t: (t[2], t[1]))
+
+        lines.append("=== Items in inventories ===")
+        lines.append("Total item count (sum of stacks): %d" % item_total)
+        lines.append("Unique item CRCs in world: %d" % len(unique_crcs))
+        lines.append("Placeable items in item_table: %d" % len(table_placeable))
+        lines.append("Missing from world (in table, not in any inv): %d"
+                     % len(missing))
+        if missing:
+            lines.append("  (sample of 40 missing — use List missing… for full)")
+            for h, nm, cat in missing[:40]:
+                lines.append("  %s  [%s]  0x%08X" % (nm, cat, h))
+        lines.append("Stacks below max_stack: %d" % len(non_max))
+        if non_max:
+            lines.append("  (showing up to 40)")
+            for nm, crc, stack, cap in sorted(non_max, key=lambda t: t[0])[:40]:
+                lines.append("  %s  x%d / max %d  (0x%08X)" % (
+                    nm, stack, cap, crc))
+        lines.append("")
+        lines.append("=== Island header (seed / size) ===")
+        if seed_info:
+            for k in ("seed", "width", "height", "depth", "generationVersion",
+                      "islandSize"):
+                if k in seed_info:
+                    lines.append("%s = %s" % (k, seed_info[k]))
+            for k, v in sorted(seed_info.items()):
+                if k not in ("seed", "width", "height", "depth",
+                             "generationVersion", "islandSize"):
+                    lines.append("%s = %s" % (k, v))
+        else:
+            lines.append("(no seed/size found — need matching ILHD)")
+        lines.append("")
+        lines.append("=== Universe / PTHD ===")
+        if univ_lines:
+            lines.extend(univ_lines)
+        else:
+            lines.append("(no USHD/PTHD data found for parent universe)")
+        lines.append("")
+        lines.append("Note: lastVisitedIsland.islandId = 99 (0x63) is Worm Boss.")
+        lines.append("0xFFFFFFFF in event slots means unused / not set.")
+        text.insert("1.0", "\n".join(lines))
+        text.configure(state="disabled")
+        btn_row = ttk.Frame(dlg)
+        btn_row.pack(fill="x", padx=8, pady=6)
+
+        def list_missing():
+            md = tk.Toplevel(dlg)
+            md.title("Missing items — %d not in world" % len(missing))
+            md.geometry("720x480")
+            ttk.Label(
+                md,
+                text="Placeable hashes from item_table_merged.json that do "
+                     "not appear in any chest/mannequin/trader inventory "
+                     "on this island (%d missing of %d table)."
+                     % (len(missing), len(table_placeable)),
+            ).pack(anchor="w", padx=8, pady=6)
+            cols = ("name", "category", "hash")
+            tv = ttk.Treeview(md, columns=cols, show="headings", height=18)
+            for c, t, w in (("name", "Name", 280),
+                            ("category", "Category", 140),
+                            ("hash", "Hash", 110)):
+                tv.heading(c, text=t)
+                tv.column(c, width=w, anchor="w")
+            tv.pack(fill="both", expand=True, padx=8, pady=4)
+            for h, nm, cat in missing:
+                tv.insert("", "end", values=(nm, cat, "0x%08X" % h))
+            ttk.Button(md, text="Close", command=md.destroy).pack(pady=6)
+
+        ttk.Button(btn_row, text="List missing…",
+                   command=list_missing).pack(side="left")
+        ttk.Button(btn_row, text="Close", command=dlg.destroy).pack(
+            side="right")
 
     def open_world_chests(self):
         """List chests (Server Inventory) with positions; allow item/stack edits."""
@@ -7859,6 +8227,10 @@ class App(tk.Tk):
                 side="right")
 
         search_entry.bind("<Return>", apply_item_search)
+        dlg.bind("<Control-f>", lambda _e: (search_entry.focus_set(),
+                                            search_entry.selection_range(0, "end")))
+        dlg.bind("<Control-F>", lambda _e: (search_entry.focus_set(),
+                                            search_entry.selection_range(0, "end")))
         search_entry.bind("<KeyRelease>", lambda e: (
             apply_item_search() if not search_var.get().strip()
             else None))
@@ -8846,6 +9218,21 @@ class App(tk.Tk):
                 if tmpl is None:
                     continue
                 tcrc = int(tmpl) & 0xFFFFFFFF
+                # Cache body for Add template (same session)
+                try:
+                    ent = o.get("entity")
+                    if ent is not None and ent.get("vstart") is not None:
+                        if not isinstance(getattr(self, "_template_body_cache", None), dict):
+                            self._template_body_cache = {}
+                        b = bytes(doc[ent["vstart"]:ent["vend"]])
+                        self._template_body_cache[tcrc] = (
+                            b, os.path.basename(path))
+                        ind = o.get("induced")
+                        if ind is not None:
+                            self._template_body_cache[int(ind) & 0xFFFFFFFF] = (
+                                b, os.path.basename(path))
+                except Exception:
+                    pass
                 pos = o.get("pos")
                 key = (round(pos[0], 1), round(pos[2], 1)) if pos else None
                 if key and key in seen_pos:
@@ -8874,9 +9261,19 @@ class App(tk.Tk):
             dlg,
             text="%d spawn(s) on this island - NPCs, enemies, props, "
                  "anything with a TemplateCRC. Replace works on any "
-                 "selected row(s); copy/tag are NPC-focused."
+                 "selected row(s); copy/tag are NPC-focused. Ctrl+F to find."
                  % len(npc_rows),
         ).pack(anchor="w", padx=8, pady=6)
+        search_fr = ttk.Frame(dlg)
+        search_fr.pack(fill="x", padx=8, pady=(0, 4))
+        ttk.Label(search_fr, text="Find prop / NPC:").pack(side="left")
+        npc_search_var = tk.StringVar()
+        npc_search_entry = ttk.Entry(
+            search_fr, textvariable=npc_search_var, width=28)
+        npc_search_entry.pack(side="left", padx=4)
+        npc_search_status = tk.StringVar(value="")
+        ttk.Label(search_fr, textvariable=npc_search_status,
+                  foreground="#444").pack(side="left", padx=6)
         cols = ("idx", "name", "kind", "islands", "x", "y", "z", "text", "template", "chunk")
         tree = ttk.Treeview(dlg, columns=cols, show="headings", height=16,
                             selectmode="extended")
@@ -8948,6 +9345,60 @@ class App(tk.Tk):
                 "e": e, "npc": npc, "kind_tag": kind_tag,
                 "container": container, "doc": doc, "kind": kind,
             }
+
+        all_npc_iids = list(tree.get_children(""))
+
+        def apply_npc_search(_evt=None):
+            q = (npc_search_var.get() or "").strip().lower()
+            if not q:
+                for iid in all_npc_iids:
+                    try:
+                        tree.reattach(iid, "", "end")
+                    except Exception:
+                        pass
+                npc_search_status.set("")
+                return
+            q_crc = None
+            try:
+                q_crc = int(q, 0) & 0xFFFFFFFF
+            except ValueError:
+                pass
+            n = 0
+            for iid in all_npc_iids:
+                vals = tree.item(iid, "values") or ()
+                blob = " ".join(str(v).lower() for v in vals)
+                hit = q in blob
+                if not hit and q_crc is not None:
+                    for v in vals:
+                        try:
+                            if int(str(v), 0) & 0xFFFFFFFF == q_crc:
+                                hit = True
+                                break
+                        except Exception:
+                            if ("0x%08x" % q_crc) in str(v).lower():
+                                hit = True
+                                break
+                if hit:
+                    try:
+                        tree.reattach(iid, "", "end")
+                    except Exception:
+                        pass
+                    n += 1
+                else:
+                    try:
+                        tree.detach(iid)
+                    except Exception:
+                        pass
+            npc_search_status.set("%d match(es)" % n)
+
+        npc_search_entry.bind("<KeyRelease>", apply_npc_search)
+        npc_search_entry.bind("<Return>", apply_npc_search)
+        dlg.bind("<Control-f>", lambda _e: (
+            npc_search_entry.focus_set(),
+            npc_search_entry.selection_range(0, "end")))
+        dlg.bind("<Control-F>", lambda _e: (
+            npc_search_entry.focus_set(),
+            npc_search_entry.selection_range(0, "end")))
 
         def copy_selected():
             sel = tree.selection()
@@ -9838,9 +10289,113 @@ class App(tk.Tk):
                    command=copy_selected).pack(side="left", padx=4)
         ttk.Button(bf, text="Copy NPC templates…",
                    command=copy_all).pack(side="left", padx=4)
+
+        def show_on_map():
+            sel = tree.selection()
+            if not sel or sel[0] not in row_data:
+                messagebox.showinfo(
+                    "Nothing selected",
+                    "Select a prop / NPC row first.", parent=dlg)
+                return
+            data = row_data[sel[0]]
+            npc = data.get("npc") or {}
+            pos = npc.get("pos") if isinstance(npc, dict) else None
+            if not (isinstance(pos, (tuple, list)) and len(pos) >= 3):
+                messagebox.showinfo(
+                    "No position",
+                    "Selected entity has no world position.", parent=dlg)
+                return
+            vals = tree.item(sel[0], "values") or ()
+            label = vals[1] if len(vals) > 1 else "entity"
+            self.open_world_map(focus_pos=pos, focus_label=str(label))
+
+        ttk.Button(bf, text="Show on map…",
+                   command=show_on_map).pack(side="left", padx=4)
         ttk.Button(bf, text="Collect all worlds → here…",
                    command=lambda: self.collect_npcs_into_world(path)).pack(
                        side="left", padx=4)
+        def duplicate_selected():
+            """Copy selected entity body to X/Y/Z (or near pad)."""
+            sel = tree.selection()
+            if not sel or sel[0] not in row_data:
+                messagebox.showinfo(
+                    "Nothing selected",
+                    "Select a row in this list first.\n"
+                    "That uses the real body from this world as the source.",
+                    parent=dlg)
+                return
+            data = row_data[sel[0]]
+            npc = data.get("npc") or {}
+            ent = npc.get("entity") if isinstance(npc, dict) else None
+            doc = data.get("doc")
+            if not ent or doc is None or ent.get("vstart") is None:
+                messagebox.showerror(
+                    "No body",
+                    "Selected row has no entity bytes to copy.",
+                    parent=dlg)
+                return
+            try:
+                body = bytes(doc[ent["vstart"]:ent["vend"]])
+            except Exception as ex:
+                messagebox.showerror("Body", str(ex), parent=dlg)
+                return
+            tcrc = None
+            try:
+                tcrc = int(npc.get("template")) & 0xFFFFFFFF
+            except Exception:
+                tcrc = 0
+            label = template_label(tcrc) if tcrc else "selected"
+            # Ask for coords
+            cd = tk.Toplevel(dlg)
+            cd.title("Duplicate to coordinates")
+            ttk.Label(
+                cd,
+                text="Duplicate 0x%08X (%s) into this world at:"
+                     % (tcrc or 0, label),
+            ).pack(anchor="w", padx=8, pady=6)
+            fr = ttk.Frame(cd)
+            fr.pack(fill="x", padx=8)
+            xv, yv, zv = tk.StringVar(), tk.StringVar(), tk.StringVar()
+            pos0 = npc.get("pos") if isinstance(npc, dict) else None
+            if pos0 and len(pos0) >= 3:
+                xv.set("%.1f" % float(pos0[0]))
+                yv.set("%.1f" % float(pos0[1]))
+                zv.set("%.1f" % float(pos0[2]))
+            ttk.Label(fr, text="X").pack(side="left")
+            ttk.Entry(fr, textvariable=xv, width=8).pack(side="left", padx=2)
+            ttk.Label(fr, text="Y").pack(side="left")
+            ttk.Entry(fr, textvariable=yv, width=8).pack(side="left", padx=2)
+            ttk.Label(fr, text="Z").pack(side="left")
+            ttk.Entry(fr, textvariable=zv, width=8).pack(side="left", padx=2)
+
+            def go():
+                try:
+                    pos = (float(xv.get()), float(yv.get()), float(zv.get()))
+                except ValueError:
+                    messagebox.showerror("Coords", "Need numeric X Y Z", parent=cd)
+                    return
+                cd.destroy()
+                # seed cache so insert uses this exact body
+                if not isinstance(getattr(self, "_template_body_cache", None), dict):
+                    self._template_body_cache = {}
+                self._template_body_cache[tcrc or 0] = (
+                    body, os.path.basename(path) + " (selected)")
+                ok = self._insert_template_into_world(
+                    path, tcrc or 0, label or "selected", pos=pos)
+                if ok:
+                    try:
+                        dlg.destroy()
+                    except Exception:
+                        pass
+                    self.open_world_npcs()
+
+            bf3 = ttk.Frame(cd)
+            bf3.pack(fill="x", padx=8, pady=8)
+            ttk.Button(bf3, text="Duplicate", command=go).pack(side="left")
+            ttk.Button(bf3, text="Cancel", command=cd.destroy).pack(side="right")
+
+        ttk.Button(bf, text="Duplicate selected…",
+                   command=duplicate_selected).pack(side="left", padx=4)
         ttk.Button(bf, text="Add template…",
                    command=lambda: self._open_add_template_dialog(
                        dlg, path)).pack(side="left", padx=4)
@@ -10164,26 +10719,23 @@ class App(tk.Tk):
 
     def _open_add_template_dialog(self, parent_dlg, target_path):
         """Picker over every known template (NPCs, props, pads, …) that
-        inserts one copy into target_path near the landing pad.
+        inserts one copy into target_path at chosen or default coords.
 
-        Reuses the exact same source-scan / position / insert machinery
-        as "Collect all worlds → here", just for one chosen template
-        instead of one-of-everything.
+        Body is copied from a world on disk that already has that CRC.
         """
         pd = tk.Toplevel(parent_dlg)
         pd.title("Add template to world")
-        pd.geometry("560x440")
+        pd.geometry("580x520")
         ttk.Label(
             pd,
-            text="Pick a known template to insert a copy of into this "
-                 "world, or type a raw hex/decimal CRC. The source body "
-                 "is copied from wherever it was last seen on disk, since "
-                 "there's no way to build one from scratch.",
-            wraplength=530,
+            text="Pick a known template (or type a raw hex CRC). A real "
+                 "entity body is copied from another world on disk — "
+                 "templates cannot be invented from a CRC alone.",
+            wraplength=550,
         ).pack(anchor="w", padx=8, pady=6)
         qvar = tk.StringVar()
         ttk.Entry(pd, textvariable=qvar).pack(fill="x", padx=8, pady=4)
-        lb = tk.Listbox(pd, font=("Courier New", 9))
+        lb = tk.Listbox(pd, font=("Courier New", 9), height=14)
         lb.pack(fill="both", expand=True, padx=8, pady=4)
         choices = []  # list of (crc, label)
 
@@ -10196,13 +10748,14 @@ class App(tk.Tk):
             for crc, name in items:
                 crc = int(crc) & 0xFFFFFFFF
                 label = "%-40s  0x%08X" % ((name or "?")[:40], crc)
-                if q and q not in label.lower() and q not in ("%d" % crc):
+                if q and q not in label.lower() and q not in ("%d" % crc) \
+                        and q not in ("%08x" % crc):
                     continue
                 choices.append((crc, name or "?"))
                 lb.insert("end", label)
             if not choices and q:
                 try:
-                    c = int(q, 16 if q.startswith("0x") else 10) & 0xFFFFFFFF
+                    c = int(q, 16 if q.lower().startswith("0x") else 10) & 0xFFFFFFFF
                     choices.append((c, "custom 0x%08X" % c))
                     lb.insert("end", "custom 0x%08X (%d)" % (c, c))
                 except ValueError:
@@ -10211,15 +10764,56 @@ class App(tk.Tk):
         qvar.trace_add("write", refresh)
         refresh()
 
+        # Spawn coordinates (blank = auto near landing pad)
+        cf = ttk.Frame(pd)
+        cf.pack(fill="x", padx=8, pady=4)
+        ttk.Label(cf, text="Spawn X Y Z (blank = near pad):").pack(side="left")
+        x_var = tk.StringVar()
+        y_var = tk.StringVar()
+        z_var = tk.StringVar()
+        ttk.Entry(cf, textvariable=x_var, width=8).pack(side="left", padx=2)
+        ttk.Entry(cf, textvariable=y_var, width=8).pack(side="left", padx=2)
+        ttk.Entry(cf, textvariable=z_var, width=8).pack(side="left", padx=2)
+
         def do_add(_evt=None):
             sel = lb.curselection()
             if not sel:
+                messagebox.showinfo(
+                    "Add template",
+                    "Select a template in the list first.",
+                    parent=pd)
                 return
-            crc, name = choices[sel[0]]
-            pd.destroy()
-            self._insert_template_into_world(target_path, crc, name)
-            parent_dlg.destroy()
-            self.open_world_npcs()
+            if not choices:
+                return
+            idx = int(sel[0])
+            if idx < 0 or idx >= len(choices):
+                return
+            crc, name = choices[idx]
+            pos = None
+            try:
+                xs, ys, zs = x_var.get().strip(), y_var.get().strip(), z_var.get().strip()
+                if xs or ys or zs:
+                    if not (xs and ys and zs):
+                        messagebox.showerror(
+                            "Coords",
+                            "Enter all three of X, Y, Z — or leave all blank.",
+                            parent=pd)
+                        return
+                    pos = (float(xs), float(ys), float(zs))
+            except ValueError:
+                messagebox.showerror(
+                    "Coords", "X Y Z must be numbers.", parent=pd)
+                return
+            # Keep dialog open until insert reports success/failure
+            ok = self._insert_template_into_world(
+                target_path, crc, name, pos=pos)
+            if ok:
+                pd.destroy()
+                try:
+                    parent_dlg.destroy()
+                except Exception:
+                    pass
+                self.open_world_npcs()
 
         lb.bind("<Double-1>", do_add)
         bf2 = ttk.Frame(pd)
@@ -10227,49 +10821,130 @@ class App(tk.Tk):
         ttk.Button(bf2, text="Add", command=do_add).pack(side="left")
         ttk.Button(bf2, text="Cancel", command=pd.destroy).pack(side="right")
 
-    def _insert_template_into_world(self, target_path, crc, label):
-        """Find one real body for `crc` anywhere on disk, place it near
-        the target world's landing pad (safe XZ band, same as Collect
-        NPCs), and insert it. One write, with backup + verify."""
-        crc = int(crc) & 0xFFFFFFFF
-        if not self._ensure_dict():
-            return
+    def _find_template_body(self, crc, prefer_paths=None):
+        """Locate entity document bytes for TemplateCRC (or InducedSpawnTemplate).
 
-        # --- find a real source body for this template ---
-        body = None
-        src_name = None
-        for row in getattr(self, "_all_saves", None) or find_saves():
-            info = row[4]
+        Search order: prefer_paths, then every world from find_saves().
+        Returns (body_bytes, source_label) or (None, None).
+        """
+        crc = int(crc) & 0xFFFFFFFF
+        # Session cache filled by previous scans / NPC list
+        cache = getattr(self, "_template_body_cache", None)
+        if isinstance(cache, dict) and crc in cache:
+            body, src = cache[crc]
+            if body:
+                return body, src or "cache"
+
+        paths = []
+        seen = set()
+        for pth in (prefer_paths or []):
+            if pth and os.path.isfile(pth) and pth not in seen:
+                paths.append(pth)
+                seen.add(pth)
+        try:
+            rows = find_saves()
+            self._all_saves = rows
+        except Exception:
+            rows = getattr(self, "_all_saves", None) or []
+        for row in rows:
+            try:
+                info = row[4]
+                wpath = row[3]
+            except (TypeError, IndexError):
+                continue
             if info.get("type") != "world":
                 continue
-            wpath = row[3]
-            wname = info.get("location_name") or row[2] or wpath
-            try:
-                for e, doc, kind, nodes, _container in self._scan_world_bkck(wpath):
-                    for rec in extract_world_all_templates(nodes):
-                        if rec.get("template") != crc:
-                            continue
-                        ent = rec.get("entity")
-                        if not ent or ent.get("vstart") is None:
-                            continue
-                        body = bytes(doc[ent["vstart"]:ent["vend"]])
-                        src_name = wname
-                        break
-                    if body is not None:
-                        break
-            except Exception:
+            if not wpath or wpath in seen or not os.path.isfile(wpath):
                 continue
-            if body is not None:
-                break
+            paths.append(wpath)
+            seen.add(wpath)
+
+        def _body_from_rec(doc, rec):
+            ent = rec.get("entity")
+            if not ent:
+                return None
+            vs, ve = ent.get("vstart"), ent.get("vend")
+            if vs is None or ve is None:
+                return None
+            try:
+                return bytes(doc[vs:ve])
+            except Exception:
+                return None
+
+        def _rec_matches(rec):
+            try:
+                tcrc = rec.get("template")
+                if tcrc is not None and (int(tcrc) & 0xFFFFFFFF) == crc:
+                    return True
+            except (TypeError, ValueError):
+                pass
+            try:
+                ind = rec.get("induced")
+                if ind is not None and (int(ind) & 0xFFFFFFFF) == crc:
+                    return True
+            except (TypeError, ValueError):
+                pass
+            return False
+
+        scanned = 0
+        for wpath in paths:
+            scanned += 1
+            wname = os.path.basename(wpath)
+            try:
+                for e, doc, kind, nodes, _c in self._scan_world_bkck(wpath):
+                    for rec in extract_world_all_templates(nodes):
+                        if not _rec_matches(rec):
+                            continue
+                        body = _body_from_rec(doc, rec)
+                        if not body:
+                            continue
+                        # Cache under both TemplateCRC and induced
+                        if not isinstance(getattr(self, "_template_body_cache", None), dict):
+                            self._template_body_cache = {}
+                        self._template_body_cache[crc] = (body, wname)
+                        try:
+                            t = rec.get("template")
+                            if t is not None:
+                                self._template_body_cache[int(t) & 0xFFFFFFFF] = (body, wname)
+                        except Exception:
+                            pass
+                        self.log(
+                            "Template source: 0x%08X found in %s "
+                            "(scanned %d world file(s))"
+                            % (crc, wname, scanned))
+                        return body, wname
+            except Exception as ex:
+                self.log("Template search skip %s: %s" % (wname, ex))
+                continue
+        self.log(
+            "Template source: 0x%08X not found after scanning %d world file(s)"
+            % (crc, scanned))
+        return None, None
+
+    def _insert_template_into_world(self, target_path, crc, label, pos=None):
+        """Find one real body for `crc` anywhere on disk, place it at
+        `pos` (x,y,z) or near the landing pad, and insert it.
+        Returns True on success."""
+        crc = int(crc) & 0xFFFFFFFF
+        if not self._ensure_dict():
+            return False
+
+        body, src_name = self._find_template_body(
+            crc, prefer_paths=[target_path])
 
         if body is None:
             messagebox.showerror(
                 "No source found",
-                "0x%08X (%s) has never been seen on disk in any world "
-                "this tool has scanned, so there's no real entity body "
-                "to copy - a template can't be built from just a CRC."
+                "0x%08X (%s) was not found as a real entity in any "
+                "world file on disk.\n\n"
+                "Checked every 04… world under your save folders.\n"
+                "If it only exists as a name in the template list, "
+                "place it once in-game on any island, save, quit the "
+                "game fully, then try again.\n\n"
+                "Tip: open that island in NPCs/spawns first — that "
+                "also caches bodies for Add template."
                 % (crc, label))
-            return
+            return False
 
         if not messagebox.askyesno(
                 "Add template",
@@ -10278,13 +10953,13 @@ class App(tk.Tk):
                 "Position: near the landing pad, safe XZ band.\n"
                 "A .bak is made first. Continue?"
                 % (crc, label, src_name, target_path)):
-            return
+            return False
 
         try:
             container = load_container(target_path)
         except Exception as ex:
             messagebox.showerror("Load failed", str(ex))
-            return
+            return False
         self.savefile_path.set(target_path)
         self.container = container
 
@@ -10323,7 +10998,7 @@ class App(tk.Tk):
             messagebox.showerror(
                 "No EntityArray",
                 "Target world has no EntityArray to insert into.")
-            return
+            return False
         hosts.sort(key=lambda h: h[1])  # emptiest first
 
         if origin is None:
@@ -10332,36 +11007,38 @@ class App(tk.Tk):
         if pad_y is not None:
             oy = float(pad_y)
 
-        width = height = depth = None
-        try:
-            width, height, depth = self._lookup_target_island_dims(target_path)
-        except Exception:
-            pass
-        if width or depth:
-            x_min, x_max, z_min, z_max = npc_safe_xz_band(width, depth)
+        if pos is not None:
+            x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
         else:
-            x_min = z_min = _NPC_SAFE_XZ_MIN
-            x_max = z_max = _NPC_SAFE_XZ_MAX
-        try:
-            max_layers = npc_max_layers(oy, height)
-        except Exception:
-            max_layers = None
-
-        (x, y, z), = _npc_grid_positions(
-            1, ox, oy, oz, x_min, x_max, z_min, z_max, max_layers)
+            width = height = depth = None
+            try:
+                width, height, depth = self._lookup_target_island_dims(target_path)
+            except Exception:
+                pass
+            if width or depth:
+                x_min, x_max, z_min, z_max = npc_safe_xz_band(width, depth)
+            else:
+                x_min = z_min = _NPC_SAFE_XZ_MIN
+                x_max = z_max = _NPC_SAFE_XZ_MAX
+            try:
+                max_layers = npc_max_layers(oy, height)
+            except Exception:
+                max_layers = None
+            (x, y, z), = _npc_grid_positions(
+                1, ox, oy, oz, x_min, x_max, z_min, z_max, max_layers)
 
         host_entry, _n = hosts[0]
         try:
             doc, kind = unwrap(container.chunk(host_entry), self.dctx)
         except Exception as ex:
             messagebox.showerror("Unwrap failed", str(ex))
-            return
+            return False
         buf = bytearray(doc)
         try:
             nodes2, _ = bson_parse(buf)
         except Exception as ex:
             messagebox.showerror("Parse failed", str(ex))
-            return
+            return False
         earr2 = None
         for n in _walk(nodes2):
             if n.get("key") == "EntityArray" and n.get("children") is not None:
@@ -10370,7 +11047,7 @@ class App(tk.Tk):
         if earr2 is None:
             messagebox.showerror("No EntityArray", "Host chunk lost its "
                                  "EntityArray between scan and write.")
-            return
+            return False
         next_idx = len(earr2.get("children") or [])
         try:
             body2 = _patch_entity_position_bytes(body, x, y, z)
@@ -10383,14 +11060,14 @@ class App(tk.Tk):
             bson_parse(bytearray(buf))  # verify structure before writing
         except Exception as ex:
             messagebox.showerror("Insert failed", str(ex))
-            return
+            return False
         try:
             self.write_container(
                 host_entry["id"], wrap(bytes(buf), kind, self.cctx),
                 verify_label="add template 0x%08X" % crc)
         except Exception as ex:
             messagebox.showerror("Write failed", str(ex))
-            return
+            return False
         self.log("Added template 0x%08X (%s) from %s -> (%.1f, %.1f, %.1f) "
                  "in %s" % (crc, label, src_name, x, y, z, target_path))
         messagebox.showinfo(
@@ -10398,23 +11075,25 @@ class App(tk.Tk):
             "Inserted 0x%08X (%s) at (%.1f, %.1f, %.1f).\n\n"
             "Fully quit Portal Knights (not just main menu) before "
             "loading this world." % (crc, label, x, y, z))
+        return True
 
 
 
-    def open_world_map(self):
-        """Top-down X/Z map with zoom, pan, and right-click to edit.
+    def _scan_world_map_data(self, path):
+        """Scan a world file's BKCK chunks for everything open_world_map
+        draws: chests/signs/NPCs/pads/other-templated entities, terrain
+        voxels, and the view bounds/alignment heuristics (grid packing,
+        landing-pad snap, story-vs-creative bounds strategy). Pure data -
+        no widgets are created here. Returns None (having already shown
+        the appropriate message) if there's no world to scan or nothing
+        positioned was found - same behavior as before this was split
+        out of open_world_map, just now callable and readable on its own.
 
-        No textures — rectangles for chests / signs / NPCs / landing pad.
-        Mouse wheel = zoom, drag = pan, right-click or double-click = open.
+        Extracted verbatim from open_world_map (no logic changes) so
+        this dense, empirically-tuned alignment code is a separately
+        readable/callable unit instead of being lines 15-550 of one
+        1700-line function.
         """
-        path, info = self._resolve_world_path()
-        if not path:
-            messagebox.showinfo(
-                "No world",
-                "Select a world file first (filter → Worlds, or the Worlds tab).")
-            return
-        if not self._ensure_dict():
-            return
         try:
             scanned = list(self._scan_world_bkck(path))
         except Exception as exc:
@@ -10949,6 +11628,57 @@ class App(tk.Tk):
         if not terrain_trusted and entity_pts:
             terrain_clip = (min_x - 8, max_x + 8, min_z - 8, max_z + 8)
 
+        return WorldMapData(
+            chests=chests, signs=signs, npcs=npcs, pads=pads, others=others,
+            scanned=scanned, terrain_chunks=terrain_chunks,
+            terrain_origin=terrain_origin, terrain_heightmap=terrain_heightmap,
+            swap_axes=swap_axes, terrain_clip=terrain_clip,
+            terrain_trusted=terrain_trusted,
+            min_x=min_x, max_x=max_x, min_z=min_z, max_z=max_z,
+            world_w=world_w, world_h=world_h,
+        )
+
+
+    def open_world_map(self, focus_pos=None, focus_label=None):
+        """Top-down X/Z map with zoom, pan, and right-click to edit.
+
+        No textures — rectangles for chests / signs / NPCs / landing pad.
+        Mouse wheel = zoom, drag = pan, right-click or double-click = open.
+
+        focus_pos: optional (x, z) or (x, y, z) to center/highlight.
+        focus_label: optional tooltip string for that highlight.
+        """
+        path, info = self._resolve_world_path()
+        if not path:
+            messagebox.showinfo(
+                "No world",
+                "Select a world file first (filter → Worlds, or the Worlds tab).")
+            return
+        if not self._ensure_dict():
+            return
+        data = self._scan_world_map_data(path)
+        if data is None:
+            return
+        if focus_pos is not None:
+            try:
+                fx = float(focus_pos[0])
+                fz = float(focus_pos[2] if len(focus_pos) > 2 else focus_pos[1])
+                self._map_last_opened_pos = (fx, fz)
+                self._map_focus_label = focus_label or ""
+            except Exception:
+                pass
+        chests, signs, npcs, pads, others = (
+            data.chests, data.signs, data.npcs, data.pads, data.others)
+        scanned = data.scanned
+        terrain_chunks = data.terrain_chunks
+        terrain_origin = data.terrain_origin
+        terrain_heightmap = data.terrain_heightmap
+        swap_axes = data.swap_axes
+        terrain_clip = data.terrain_clip
+        terrain_trusted = data.terrain_trusted
+        min_x, max_x, min_z, max_z = (
+            data.min_x, data.max_x, data.min_z, data.max_z)
+        world_w, world_h = data.world_w, data.world_h
         dlg = tk.Toplevel(self)
         if not hasattr(self, "_universe_meta"):
             self._universe_meta = {}
@@ -11743,10 +12473,88 @@ class App(tk.Tk):
                     best, outline="#eeeeee")
 
             zoom_var.set("%d%%" % int(round(zmul * 100)))
+            # Highlight external focus (e.g. Show on map from NPCs)
+            lp = getattr(self, "_map_last_opened_pos", None)
+            if lp is not None:
+                hx, hz = lp
+                cx, cy = world_to_canvas(hx, hz)
+                canvas.create_oval(
+                    cx - 10, cy - 10, cx + 10, cy + 10,
+                    outline="#ffcc00", width=2, tags=("focus",))
+                fl = getattr(self, "_map_focus_label", "") or ""
+                if fl:
+                    canvas.create_text(
+                        cx, cy - 14, text=fl[:40], fill="#ffcc00",
+                        anchor="s", tags=("focus",))
+
+        search_fr = ttk.Frame(dlg)
+        search_fr.pack(fill="x", padx=8, pady=(0, 2))
+        ttk.Label(search_fr, text="Find on map:").pack(side="left")
+        map_q = tk.StringVar()
+        map_entry = ttk.Entry(search_fr, textvariable=map_q, width=28)
+        map_entry.pack(side="left", padx=4)
+        map_search_status = tk.StringVar(value="")
+        ttk.Label(search_fr, textvariable=map_search_status,
+                  foreground="#444").pack(side="left", padx=6)
+
+        def center_on_world(x, z):
+            try:
+                cx, cy = world_to_canvas(x, z)
+                # Scroll so (cx,cy) is near the middle of the viewport
+                canvas.update_idletasks()
+                w = max(canvas.winfo_width(), 1)
+                h = max(canvas.winfo_height(), 1)
+                sr = canvas.cget("scrollregion")
+                parts = [float(p) for p in sr.split()]
+                if len(parts) == 4:
+                    total_w = max(parts[2] - parts[0], 1)
+                    total_h = max(parts[3] - parts[1], 1)
+                    canvas.xview_moveto(max(0, (cx - w / 2) / total_w))
+                    canvas.yview_moveto(max(0, (cy - h / 2) / total_h))
+            except Exception:
+                pass
+
+        def map_find(_evt=None):
+            q = (map_q.get() or "").strip().lower()
+            if not q:
+                map_search_status.set("")
+                return
+            q_crc = None
+            try:
+                q_crc = int(q, 0) & 0xFFFFFFFF
+            except ValueError:
+                pass
+            hits = []
+            for h in state.get("hit") or []:
+                lab = (h.get("label") or "").lower()
+                if q in lab:
+                    hits.append(h)
+                    continue
+                if q_crc is not None and ("0x%08x" % q_crc) in lab:
+                    hits.append(h)
+            if not hits:
+                map_search_status.set("No match")
+                return
+            h0 = hits[0]
+            self._map_last_opened_pos = (h0["x"], h0["z"])
+            self._map_focus_label = (h0.get("label") or "")[:60]
+            redraw()
+            center_on_world(h0["x"], h0["z"])
+            map_search_status.set(
+                "%d hit(s) · centered on first" % len(hits)
+                if len(hits) > 1 else "1 hit")
+
+        map_entry.bind("<Return>", map_find)
+        ttk.Button(search_fr, text="Find", command=map_find).pack(
+            side="left", padx=2)
+        dlg.bind("<Control-f>", lambda _e: (
+            map_entry.focus_set(), map_entry.selection_range(0, "end")))
+        dlg.bind("<Control-F>", lambda _e: (
+            map_entry.focus_set(), map_entry.selection_range(0, "end")))
 
         tip = tk.StringVar(
             value="Hover · right/double-click: edit chest/sign · "
-                  "copy CRC for NPC/enemy/gray prop")
+                  "copy CRC for NPC/enemy/gray prop · Ctrl+F find")
         ttk.Label(dlg, textvariable=tip, foreground="#444").pack(
             anchor="w", padx=8, pady=(0, 2))
 
@@ -11921,6 +12729,40 @@ class App(tk.Tk):
         def on_double(evt):
             open_hit(find_nearest(evt))
 
+        # A heavy world's redraw() can create thousands of prop markers
+        # plus up to 25000 terrain cells - real, single Tkinter canvas
+        # items each. Calling it on every raw mouse-wheel tick or every
+        # paint-drag motion event (as before) made zooming/painting a
+        # heavily-propped world freeze for seconds per gesture, since a
+        # normal scroll or drag fires many of those events per second.
+        # This coalesces a burst into at most one redraw every
+        # _REDRAW_MIN_MS, with a guaranteed trailing call so the final
+        # state is always fully, correctly redrawn once the burst ends.
+        _REDRAW_MIN_MS = 60
+        state["_redraw_last_ts"] = 0.0
+        state["_redraw_pending_id"] = None
+
+        def throttled_redraw():
+            pending = state.get("_redraw_pending_id")
+            if pending is not None:
+                try:
+                    canvas.after_cancel(pending)
+                except Exception:
+                    pass
+                state["_redraw_pending_id"] = None
+            now = time.monotonic() * 1000
+            elapsed = now - state.get("_redraw_last_ts", 0.0)
+            if elapsed >= _REDRAW_MIN_MS:
+                state["_redraw_last_ts"] = now
+                redraw()
+                return
+            def _fire():
+                state["_redraw_pending_id"] = None
+                state["_redraw_last_ts"] = time.monotonic() * 1000
+                redraw()
+            state["_redraw_pending_id"] = canvas.after(
+                max(int(_REDRAW_MIN_MS - elapsed), 1), _fire)
+
         # Zoom on mouse wheel (Windows / Linux / macOS)
         def on_zoom(evt):
             # delta: Windows uses evt.delta (120 steps); Linux Button-4/5
@@ -11947,24 +12789,23 @@ class App(tk.Tk):
             wx = min_x + (cx - m_old) / max(pw_old, 1e-6) * world_w
             wz = max_z - (cy - m_old) / max(ph_old, 1e-6) * world_h
             state["zoom"] = new
-            redraw()
-            # Re-center so same world point stays under cursor
-            nx, ny = world_to_canvas(wx, wz)
-            # Move scroll so (nx,ny) appears at evt position
-            # Approximate by xview/yview fractions
-            sr = canvas.cget("scrollregion").split()
-            if len(sr) == 4:
-                try:
-                    x0, y0, x1, y1 = map(float, sr)
-                    tw = max(x1 - x0, 1)
-                    th = max(y1 - y0, 1)
-                    # Desired top-left so cursor world maps to evt
-                    left = nx - evt.x
-                    top = ny - evt.y
-                    canvas.xview_moveto(max(0, min(1, left / tw)))
-                    canvas.yview_moveto(max(0, min(1, top / th)))
-                except Exception:
-                    pass
+            # Recentering math only needs the NEW zoom's geometry, which is
+            # a pure function of state - it doesn't actually need redraw()
+            # to have run yet. Computing it directly (instead of reading
+            # canvas.cget("scrollregion"), which only updates once redraw()
+            # runs) is what lets the expensive redraw itself be deferred
+            # below without breaking "zoom stays centered on the cursor".
+            pw_new = base_w * new
+            ph_new = base_h * new
+            m_new = margin * max(1.0, new * 0.5)
+            tw = max(pw_new + 2 * m_new, 1.0)
+            th = max(ph_new + 2 * m_new, 1.0)
+            nx, ny = world_to_canvas(wx, wz, zoom=new)
+            left = nx - evt.x
+            top = ny - evt.y
+            canvas.xview_moveto(max(0, min(1, left / tw)))
+            canvas.yview_moveto(max(0, min(1, top / th)))
+            throttled_redraw()
 
         def on_press(evt):
             mode = paint_mode.get()
@@ -12014,7 +12855,11 @@ class App(tk.Tk):
                 state["drag"] = ("paint", ix, iz)
                 bid = _selected_block_id()
                 _queue_paint_cell(ix, iz, bid)
-                redraw()
+                # <B1-Motion> fires on every pixel of mouse movement during
+                # the drag - throttled here (unlike on_press/on_release's
+                # single discrete redraw() calls) since this is the actual
+                # rapid-fire hotspot on a heavily-propped world.
+                throttled_redraw()
                 return
             if state["drag"][0] != "pan":
                 return
@@ -12081,12 +12926,19 @@ class App(tk.Tk):
         ttk.Button(bf, text="Close", command=dlg.destroy).pack(side="right")
 
         redraw()
+        lp = getattr(self, "_map_last_opened_pos", None)
+        if lp is not None:
+            try:
+                center_on_world(lp[0], lp[1])
+            except Exception:
+                pass
 
     def open_world_3d_preview(self):
-        """Orbitable 3D voxel preview (matplotlib) — view only, no edit.
+        """Orbitable 3D preview — terrain voxels + entity markers.
 
-        Coloured cubes from BKCK voxelData using BLOCK_COLORS. Large worlds
-        are subsampled so the window stays responsive.
+        Shows BKCK blocks as coloured cubes (island shape) and props /
+        bosses / pads / chests as scatter markers so sparse creative
+        worlds still read as a layout. View only — no edit.
         """
         path, info = self._resolve_world_path()
         if not path:
@@ -12109,11 +12961,12 @@ class App(tk.Tk):
                 "(%s)" % ex)
             return
 
-        def _hex_to_rgb(h):
+        def _hex_to_rgb(h, alpha=1.0):
             h = (h or "#888888").lstrip("#")
             if len(h) != 6:
-                return (0.5, 0.5, 0.5)
-            return tuple(int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+                return (0.5, 0.5, 0.5, alpha)
+            rgb = tuple(int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+            return rgb + (alpha,)
 
         try:
             scanned = list(self._scan_world_bkck(path))
@@ -12121,8 +12974,11 @@ class App(tk.Tk):
             messagebox.showerror("Save file error", str(exc))
             return
 
-        # Collect non-air voxels with world coords (sparse bitfield default)
+        # --- voxels ---
         terrain_chunks = {}
+        pad_entity_pos = None
+        entity_pts = []  # (x,y,z, kind, label, tcrc)
+        # kind: boss | pad | chest | npc | enemy | block | prop
         for e, doc, kind, nodes, _c in scanned:
             for vx in extract_bkck_voxels(nodes, e.get("id")):
                 cid = int(vx["chunk_id"])
@@ -12134,16 +12990,62 @@ class App(tk.Tk):
                     cells.append((lx, ly, lz, b))
                 if cells:
                     terrain_chunks[cid] = cells
+            # entities (props / bosses / pads) — these define shape when
+            # voxels are almost empty (stripped creative / entity merges)
+            for o in extract_world_all_templates(nodes):
+                pos = o.get("pos")
+                tmpl = o.get("template")
+                if not pos or tmpl is None:
+                    continue
+                tcrc = int(tmpl) & 0xFFFFFFFF
+                lab = template_label(tcrc) or ""
+                low = lab.lower()
+                if tcrc in landing_pad_template_crcs() or "landing" in low:
+                    ekind = "pad"
+                    if pad_entity_pos is None:
+                        pad_entity_pos = pos
+                elif any(k in low for k in (
+                        "boss", "spawner", "spawning", "damage zone",
+                        "loot marker", "dragon_egg", "worm")):
+                    ekind = "boss"
+                elif tcrc in BLOCK_PROP_COLORS or any(
+                        k in low for k in (
+                            "block", "stone", "brick", "dirt", "sunstone",
+                            "moon stone", "crystal", "ore")):
+                    ekind = "block"
+                elif _is_enemy_map_marker(tcrc, o, lab):
+                    ekind = "enemy"
+                elif any(k in low for k in ("chest", "crate", "barrel")):
+                    ekind = "chest"
+                elif any(k in low for k in ("npc", "trader", "merchant")):
+                    ekind = "npc"
+                else:
+                    ekind = "prop"
+                entity_pts.append((
+                    float(pos[0]), float(pos[1]), float(pos[2]),
+                    ekind, lab, tcrc))
 
-        if not terrain_chunks:
+        # inventories as chests if template pass missed them
+        try:
+            for e, doc, kind, nodes, _c in scanned:
+                for ch in extract_world_chests(nodes):
+                    pos = ch.get("pos")
+                    if not pos:
+                        continue
+                    entity_pts.append((
+                        float(pos[0]), float(pos[1]), float(pos[2]),
+                        "chest", "chest", 0))
+        except Exception:
+            pass
+
+        if not terrain_chunks and not entity_pts:
             messagebox.showinfo(
                 "3D preview",
-                "No solid BKCK voxels found in this world.")
+                "No solid voxels or entities found in this world.")
             return
 
         int_ids = list(terrain_chunks.keys())
-        sparse = chunk_ids_are_sparse_bitfield(int_ids)
-        # Creative USHD → prefer bitfield
+        sparse = chunk_ids_are_sparse_bitfield(int_ids) if int_ids else True
         try:
             for e in load_container(path).entries:
                 if e.get("tag") == b"USHD":
@@ -12159,108 +13061,177 @@ class App(tk.Tk):
             gx, gz = grid_fn(cid)
             origins[cid] = (float(gx * 32), float(gz * 32))
 
-        # World-space integer cells: (wx, wy, wz) -> block id
+        # Snap voxel origins toward landing-pad entity when possible
+        # (same idea as the 2D map — creative chunk ids alone mis-align).
+        if pad_entity_pos is not None and origins and terrain_chunks:
+            best = None
+            for cid, cells in terrain_chunks.items():
+                pads = [(lx, ly, lz) for lx, ly, lz, b in cells if b == 251]
+                if len(pads) < 4:
+                    continue
+                ox, oz = origins[cid]
+                xs, zs = [], []
+                for lx, ly, lz in pads:
+                    wx, wz = local_to_world_xz(ox, oz, lx, lz, swap_axes)
+                    xs.append(wx + 0.5)
+                    zs.append(wz + 0.5)
+                cx, cz = sum(xs) / len(xs), sum(zs) / len(zs)
+                dist = ((cx - pad_entity_pos[0]) ** 2 +
+                        (cz - pad_entity_pos[2]) ** 2) ** 0.5
+                if best is None or dist < best[0]:
+                    best = (dist, cx, cz)
+            if best is not None and best[0] < 48.0:
+                dx = pad_entity_pos[0] - best[1]
+                dz = pad_entity_pos[2] - best[2]
+                if abs(dx) < 64 and abs(dz) < 64:
+                    for cid in list(origins.keys()):
+                        ox, oz = origins[cid]
+                        origins[cid] = (ox + dx, oz + dz)
+
         cells_world = {}
         for cid, cells in terrain_chunks.items():
             ox, oz = origins.get(cid, (0.0, 0.0))
+            # Vertical layer: high bits of chunk id stack 32-tall slabs.
+            y_base = (int(cid) >> 6) * 32
             for lx, ly, lz, b in cells:
                 wx, wz = local_to_world_xz(ox, oz, lx, lz, swap_axes)
-                key = (int(round(wx)), int(ly), int(round(wz)))
+                key = (int(round(wx)), int(ly) + y_base, int(round(wz)))
                 cells_world[key] = b
 
-        n_total = len(cells_world)
-        if n_total == 0:
-            messagebox.showinfo("3D preview", "No solid voxels to show.")
-            return
+        n_vox = len(cells_world)
+        # Sparse creative: block props as pseudo-voxels (sunstone platforms)
+        if n_vox < 200:
+            for x, y, z, k, _l, _t in entity_pts:
+                if k != "block":
+                    continue
+                key = (int(round(x)), int(round(y)), int(round(z)))
+                cells_world.setdefault(key, 37)  # ruinstone stand-in
 
-        min_x = min(k[0] for k in cells_world)
-        max_x = max(k[0] for k in cells_world)
-        min_y = min(k[1] for k in cells_world)
-        max_y = max(k[1] for k in cells_world)
-        min_z = min(k[2] for k in cells_world)
-        max_z = max(k[2] for k in cells_world)
+        # Exterior shell only (keeps underside / overhangs, drops interior fill)
+        if cells_world:
+            solid = set(cells_world.keys())
+            shell = {}
+            for (x, y, z), b in cells_world.items():
+                if ((x + 1, y, z) not in solid or (x - 1, y, z) not in solid or
+                        (x, y + 1, z) not in solid or (x, y - 1, z) not in solid or
+                        (x, y, z + 1) not in solid or (x, y, z - 1) not in solid):
+                    shell[(x, y, z)] = b
+            cells_world = shell
 
-        nx = max_x - min_x + 1
-        ny = max_y - min_y + 1
-        nz = max_z - min_z + 1
-        # Cap grid size — voxels() is O(volume); thin creative strips are fine
-        MAX_DIM = 160
-        MAX_VOL = 120000
-        subtitle = "%d voxels  grid %d×%d×%d" % (n_total, nx, ny, nz)
-        if nx * ny * nz > MAX_VOL or max(nx, ny, nz) > MAX_DIM:
-            # Surface-only: keep top block per (x,z)
-            top = {}
-            for (wx, wy, wz), b in cells_world.items():
-                prev = top.get((wx, wz))
-                if prev is None or wy > prev[0]:
-                    top[(wx, wz)] = (wy, b)
-            cells_world = {
-                (wx, wy, wz): b for (wx, wz), (wy, b) in top.items()
-            }
-            n_total = len(cells_world)
-            min_x = min(k[0] for k in cells_world)
-            max_x = max(k[0] for k in cells_world)
-            min_y = min(k[1] for k in cells_world)
-            max_y = max(k[1] for k in cells_world)
-            min_z = min(k[2] for k in cells_world)
-            max_z = max(k[2] for k in cells_world)
-            nx = max_x - min_x + 1
-            ny = max_y - min_y + 1
-            nz = max_z - min_z + 1
-            subtitle = "%d surface voxels  grid %d×%d×%d" % (
-                n_total, nx, ny, nz)
+        n_vox = len(cells_world)
+        # Spatial grid subsample (list-stride made visible stripes when zoomed)
+        MAX_POINTS = 14000
+        if n_vox > MAX_POINTS:
+            # bucket into ~grid cells so close-ups stay coherent
+            import math as _m
+            xs = [k[0] for k in cells_world]
+            zs = [k[2] for k in cells_world]
+            span = max(max(xs) - min(xs), max(zs) - min(zs), 1)
+            # aim ~sqrt(MAX_POINTS) cells on the long axis
+            cell = max(1, int(_m.ceil(span / _m.sqrt(MAX_POINTS))))
+            buckets = {}
+            for (x, y, z), b in cells_world.items():
+                key = (x // cell, y // max(1, cell // 2), z // cell)
+                # keep highest block in bucket (roof) + one lower for underside
+                prev = buckets.get(key)
+                if prev is None or y > prev[0][1]:
+                    buckets[key] = ((x, y, z), b)
+                elif y < prev[0][1] and (key + ("lo",)) not in buckets:
+                    buckets[key + ("lo",)] = ((x, y, z), b)
+            cells_world = {pos: b for pos, b in buckets.values()}
+            n_vox = len(cells_world)
 
-        # matplotlib voxels: filled[x, y, z] with plot-Z vertical.
-        # Map: plot_x=world X, plot_y=world Z, plot_z=world Y (up).
-        filled = [
-            [[False for _ in range(ny)] for _ in range(nz)]
-            for _ in range(nx)
-        ]
-        facecolors = [
-            [[(0.0, 0.0, 0.0, 0.0) for _ in range(ny)] for _ in range(nz)]
-            for _ in range(nx)
-        ]
-        for (wx, wy, wz), b in cells_world.items():
-            ix = wx - min_x
-            iy = wy - min_y
-            iz = wz - min_z
-            if not (0 <= ix < nx and 0 <= iy < ny and 0 <= iz < nz):
-                continue
-            # filled[x][y][z] in matplotlib → [plot_x][plot_y][plot_z]
-            # plot_x=ix, plot_y=iz (world Z), plot_z=iy (world Y up)
-            filled[ix][iz][iy] = True
-            r, g, bcol = _hex_to_rgb(BLOCK_COLORS.get(b, "#888888"))
-            facecolors[ix][iz][iy] = (r, g, bcol, 1.0)
+        # Bounds from voxels + important entities only (boss/pad/chest/npc)
+        important = [p for p in entity_pts if p[3] in (
+            "boss", "pad", "chest", "npc", "enemy")]
+        xs = [k[0] for k in cells_world] + [p[0] for p in important]
+        ys = [k[1] for k in cells_world] + [p[1] for p in important]
+        zs = [k[2] for k in cells_world] + [p[2] for p in important]
+        if not xs:
+            xs = [p[0] for p in entity_pts]
+            ys = [p[1] for p in entity_pts]
+            zs = [p[2] for p in entity_pts]
+        min_x, max_x = int(min(xs) - 0.5), int(max(xs) + 0.5)
+        min_y, max_y = int(min(ys) - 0.5), int(max(ys) + 0.5)
+        min_z, max_z = int(min(zs) - 0.5), int(max(zs) + 0.5)
+
+        subtitle = "%d shell voxels · %d entities" % (n_vox, len(entity_pts))
 
         dlg = tk.Toplevel(self)
-        dlg.title("3D preview — %s" % os.path.basename(path))
-        dlg.geometry("960x720")
+        wname = resolve_world_display_name(
+            info,
+            universe_meta=getattr(self, "_universe_meta", {}),
+            dctx=self.dctx,
+            save_rows=getattr(self, "_all_saves", None),
+        ) if info else os.path.basename(path)
+        dlg.title("3D preview — %s" % wname)
+        dlg.geometry("1000x760")
         dlg.minsize(640, 480)
 
         top = ttk.Frame(dlg)
         top.pack(fill="x", padx=8, pady=4)
         ttk.Label(
             top,
-            text="Orbit: left-drag · Zoom: scroll · Pan: right-drag  |  %s  |  %s"
-            % (subtitle, "bitfield" if sparse else "linear"),
+            text="Orbit: left-drag · Zoom: scroll · Pan: right-drag  |  %s"
+            % subtitle,
         ).pack(side="left")
         ttk.Button(top, text="Close", command=dlg.destroy).pack(side="right")
 
-        fig = Figure(figsize=(9.2, 6.6), dpi=100)
+        legend = ttk.Frame(dlg)
+        legend.pack(fill="x", padx=8)
+        ttk.Label(
+            legend,
+            text="terrain (shell) · boss · pad · enemy — underside kept",
+            foreground="#888",
+        ).pack(side="left")
+
+        fig = Figure(figsize=(9.5, 7.0), dpi=100)
         ax = fig.add_subplot(111, projection="3d")
         ax.set_facecolor("#1a1a22")
         fig.patch.set_facecolor("#1a1a22")
 
-        # Real solid cubes (not scatter points). voxels prefers ndarray.
-        try:
-            import numpy as _np
-            filled = _np.asarray(filled, dtype=bool)
-            facecolors = _np.asarray(facecolors, dtype=float)
-        except ImportError:
-            pass
-        ax.voxels(
-            filled, facecolors=facecolors, edgecolor="#222222", linewidth=0.2,
-        )
+        # Fast path: scatter coloured points (ax.voxels is far too slow)
+        if cells_world:
+            # Group by colour for fewer draw calls
+            by_col = {}
+            for (wx, wy, wz), b in cells_world.items():
+                col = BLOCK_COLORS.get(b, "#3E484B")
+                by_col.setdefault(col, []).append((wx, wy, wz))
+            # Marker size scales with density so zoom-in is less hollow
+            ms = max(6, min(28, int(18000 / max(n_vox, 1))))
+            for col, pts in by_col.items():
+                ax.scatter(
+                    [p[0] for p in pts],
+                    [p[2] for p in pts],
+                    [p[1] for p in pts],
+                    c=col, marker="s", s=ms, alpha=0.95,
+                    depthshade=False, linewidths=0, edgecolors="none")
+
+        # Entity markers — only gameplay-relevant (props already in terrain shell)
+        kind_style = {
+            "boss":  ("o", "#FF4444", 40, 1.0),
+            "pad":   ("D", "#FFD24A", 32, 1.0),
+            "chest": ("s", "#4A90D9", 18, 0.9),
+            "npc":   ("^", "#E67E22", 20, 0.9),
+            "enemy": ("o", "#C0392B", 18, 0.85),
+        }
+        by_kind = {}
+        for pt in entity_pts:
+            if pt[3] not in kind_style:
+                continue  # skip prop/block noise that floated above terrain
+            by_kind.setdefault(pt[3], []).append(pt)
+
+        for ekind, pts in by_kind.items():
+            if not pts:
+                continue
+            marker, color, size, alpha = kind_style[ekind]
+            ax.scatter(
+                [p[0] for p in pts],
+                [p[2] for p in pts],
+                [p[1] for p in pts],
+                c=color, marker=marker, s=size, alpha=alpha,
+                depthshade=True, linewidths=0.4, edgecolors="#111",
+                label=ekind)
 
         ax.set_xlabel("X", color="#aaa")
         ax.set_ylabel("Z", color="#aaa")
@@ -12275,13 +13246,28 @@ class App(tk.Tk):
             ax.zaxis.pane.set_edgecolor("#333")
         except Exception:
             pass
-        # 1 block = 1 unit on every axis so ground is actually flat
+
+        # Aspect from full bounds (entities + voxels)
+        span_x = max(max_x - min_x, 1)
+        span_y = max(max_y - min_y, 1)
+        span_z = max(max_z - min_z, 1)
         try:
-            ax.set_box_aspect((max(nx, 1), max(nz, 1), max(ny, 1)))
+            ax.set_box_aspect((span_x, span_z, span_y))
         except Exception:
             pass
-        # Slightly raised view so the slab reads as ground, not a line
-        ax.view_init(elev=35, azim=-60)
+        try:
+            ax.set_xlim(min_x - 1, max_x + 1)
+            ax.set_ylim(min_z - 1, max_z + 1)
+            ax.set_zlim(min_y - 1, max_y + 1)
+        except Exception:
+            pass
+        ax.view_init(elev=28, azim=-55)
+        try:
+            ax.legend(
+                loc="upper left", fontsize=7, framealpha=0.3,
+                labelcolor="#ccc", facecolor="#222")
+        except Exception:
+            pass
         fig.tight_layout()
 
         canvas_frame = ttk.Frame(dlg)
@@ -12293,8 +13279,9 @@ class App(tk.Tk):
         toolbar.update()
 
         self.log(
-            "3D preview: %s voxels from %d chunk(s) — %s"
-            % (n_total, len(terrain_chunks), os.path.basename(path)))
+            "3D preview: %d voxels, %d entities, %d chunk(s) — %s"
+            % (n_vox, len(entity_pts), len(terrain_chunks),
+               os.path.basename(path)))
 
     def _autoload_characters(self):
         """Populate the Characters tab on startup without a button press."""
@@ -12786,6 +13773,60 @@ class App(tk.Tk):
             return False
 
 
+    def commit_create_av_block(self, e, doc, kind, component_data_node):
+        """Create an empty Impact Component -> AV document from scratch
+        and insert it as a new field of ComponentData, for a character
+        sparse enough not to have one at all yet (e.g. a level-1
+        character that's never triggered any attribute logic - not even
+        Health/Mana exist as fields until something touches them).
+
+        Same verified-write path as every other mutation in this tool:
+        parse-check before writing, backup + atomic write + CRC verify,
+        then confirm the new document actually reads back.
+        """
+        try:
+            buf = bytearray(doc)
+            empty_doc = struct.pack("<i", 5) + b"\x00"
+            av_field = b"\x03" + b"AV\x00" + empty_doc
+            impact_body = av_field + b"\x00"
+            impact_doc = struct.pack("<i", 4 + len(impact_body)) + impact_body
+            impact_field = b"\x03" + b"Impact Component\x00" + impact_doc
+
+            bson_insert_element(buf, component_data_node, impact_field)
+            fresh_nodes, total = bson_parse(buf)
+            if total != len(buf):
+                raise ValueError("document length %d != buffer %d after "
+                                 "insert" % (total, len(buf)))
+            payload = wrap(bytes(buf), kind, self.cctx)
+            target_id = e["id"]
+
+            def verify_fn(check):
+                for ee, ddoc, _k, _err in iter_docs(check, self.dctx):
+                    if ee["id"] != target_id or ddoc is None:
+                        continue
+                    try:
+                        nn, _ = bson_parse(ddoc)
+                    except Exception:
+                        continue
+                    for n in _iter_all(nn):
+                        if n["key"] == "AV" and n["children"] is not None:
+                            return True
+                return False
+
+            ok, _check = self.write_container(
+                target_id, payload, verify_fn=verify_fn,
+                verify_label="create Impact Component/AV")
+            if ok:
+                self.log("Created Impact Component/AV block. Verified: "
+                         "CRCs valid, document reads back.")
+                self.load_characters()
+            return ok
+        except Exception as exc:
+            self.log("ERROR creating AV block: %s" % exc)
+            messagebox.showerror("Create failed", str(exc))
+            return False
+
+
     def install_github_custom_save(self):
         """Download a custom world from the project GitHub.
 
@@ -12970,7 +14011,7 @@ class App(tk.Tk):
             nodes, _ = bson_parse(doc)
         except Exception as exc:
             messagebox.showerror("Parse failed", str(exc))
-            return
+            return False
         char_path = self.savefile_path.get()
         cinfo = parse_save_filename(char_path) if char_path else {}
         if cinfo.get("type") not in ("character", "character_backup"):
@@ -13258,11 +14299,39 @@ class FieldEditor(tk.Toplevel):
         no row to edit - they must be inserted first.
         """
         nodes = list(self._node_by_iid.values())
-        av = [n for n in nodes if n["key"] == "AV" and n["children"]]
+        # children is a list (possibly empty) for a document/array node and
+        # None for a leaf - checking "is not None" (not just truthiness)
+        # is what makes this find a fresh character's AV document, which
+        # legitimately has zero children yet rather than not existing.
+        av = [n for n in nodes if n["key"] == "AV" and n["children"] is not None]
         if not av:
-            messagebox.showerror(
-                "No stat block",
-                "No 'Attributes [AV]' document found in this character.")
+            # Genuinely absent (not just empty) - happens for a character
+            # sparse enough that not even Impact Component exists yet.
+            # Offer to create the whole thing rather than just erroring.
+            comp_data = next(
+                (n for n in nodes if n["key"] == "ComponentData"
+                 and n["children"] is not None), None)
+            if comp_data is None:
+                messagebox.showerror(
+                    "No stat block",
+                    "No 'Attributes [AV]' document found in this "
+                    "character, and no 'ComponentData' document to "
+                    "create one under either - this doesn't look like a "
+                    "normal character file.")
+                return
+            if not messagebox.askyesno(
+                    "No stat block yet",
+                    "This character has no Attributes [AV] block at all "
+                    "yet (normal for a very fresh character - nothing "
+                    "has touched its stats).\n\n"
+                    "Create an empty one now? A .bak is written first. "
+                    "You'll then click 'Add stat' again to add fields "
+                    "to it."):
+                return
+            ok = self.app.commit_create_av_block(
+                self.e, self.doc, self.kind, comp_data)
+            if ok:
+                self.reload_from_app()
             return
         target = av[0]
         present = {int(c["key"], 16) for c in target["children"]
@@ -13791,7 +14860,7 @@ class CharacterEditor(tk.Toplevel):
             nodes, _ = bson_parse(self.doc)
         except Exception as exc:
             messagebox.showerror("Parse failed", str(exc), parent=self)
-            return
+            return False
         # FieldEditor lives on the App; reuse its dialog with current entry
         if not hasattr(self.app, "open_field_editor_for"):
             # Fallback: select matching row if possible, then call main editor
@@ -14513,28 +15582,54 @@ class CharacterEditor(tk.Toplevel):
         info = ttk.LabelFrame(outer, text="Character")
         info.pack(fill="x", padx=8, pady=4)
 
-        def apply_node(node, label, raw_value, coerce_fn=None):
+        def soft_refresh_doc():
+            """Update self.doc/nodes after a write without rebuilding the
+            whole stats UI — other fields the user typed stay intact.
+            """
+            try:
+                fresh = self.app.doc_for_entry_id(self.e["id"])
+                if fresh is not None:
+                    self.e, self.doc, self.kind, self.nodes = fresh
+            except Exception:
+                pass
+
+        def apply_node(node, label, raw_value, coerce_fn=None, confirm=True):
             if node is None:
                 messagebox.showerror("Missing", "%s not on this character."
                                      % label, parent=self)
-                return
+                return False
+            # Re-resolve node by path after prior edits (offsets may shift)
+            live = node
+            try:
+                path = node.get("path")
+                if path and self.nodes is not None:
+                    hit = bson_find(self.nodes, path)
+                    if hit is not None:
+                        live = hit
+            except Exception:
+                pass
             try:
                 if coerce_fn:
                     new_v = coerce_fn(raw_value)
                 else:
-                    new_v = FieldEditor._coerce(node, raw_value)
+                    new_v = FieldEditor._coerce(live, raw_value)
             except Exception as ex:
                 messagebox.showerror("Invalid", str(ex), parent=self)
-                return
-            warn = field_advisory(node, new_v)
-            msg = "Set %s to %r?" % (label, new_v)
-            if warn:
-                msg = "NOTE: %s\n\n%s" % (warn, msg)
-            if not messagebox.askyesno("Confirm", msg, parent=self):
-                return
+                return False
+            warn = field_advisory(live, new_v)
+            if confirm:
+                msg = "Set %s to %r?" % (label, new_v)
+                if warn:
+                    msg = "NOTE: %s\n\n%s" % (warn, msg)
+                if not messagebox.askyesno("Confirm", msg, parent=self):
+                    return False
             if self.app.commit_bson_edit(self.e, self.doc, self.kind,
-                                         node, new_v):
-                self.reload()
+                                         live, new_v):
+                soft_refresh_doc()
+                return True
+            return False
+
+        pending_numeric = []  # list of (label, node, var)
 
         def add_entry_row(frame, label, node, width=18):
             row = ttk.Frame(frame)
@@ -14546,6 +15641,8 @@ class CharacterEditor(tk.Toplevel):
                 row, text="Apply",
                 command=lambda: apply_node(node, label, var.get())
             ).pack(side="left", padx=6)
+            if node is not None:
+                pending_numeric.append((label, node, var))
             return var
 
         def add_combo_row(frame, label, node, names_by_crc, by_name):
@@ -14620,6 +15717,8 @@ class CharacterEditor(tk.Toplevel):
                     apply_node(n, lab, str(mv))
                 ttk.Button(row, text="Max", command=set_max).pack(
                     side="left", padx=2)
+            if node is not None:
+                pending_numeric.append((label, node, var))
             return var
 
         # Name
@@ -14698,6 +15797,64 @@ class CharacterEditor(tk.Toplevel):
         add_currency_row(info, "Defender Coins", ac_node, max_value=4294967295)
         add_gender_row(info, gender_node)
 
+        def apply_all_numeric():
+            """Commit every numeric field that differs from the saved value.
+            Avoids the old behaviour where Apply on one field reloaded the
+            tab and wiped other edits still in the entry boxes.
+            """
+            changes = []
+            for lab, node, var in pending_numeric:
+                if node is None:
+                    continue
+                typed = (var.get() or "").strip()
+                if typed == "":
+                    continue
+                try:
+                    new_v = FieldEditor._coerce(node, typed)
+                except Exception:
+                    continue
+                try:
+                    old_v = node.get("value")
+                    if old_v is not None and int(old_v) == int(new_v):
+                        continue
+                except Exception:
+                    if str(old_v) == str(new_v):
+                        continue
+                changes.append((lab, node, typed, new_v))
+            if not changes:
+                messagebox.showinfo(
+                    "Nothing to apply",
+                    "No changed Level/Coins values to write.",
+                    parent=self)
+                return
+            summary = "\n".join("%s → %r" % (lab, nv) for lab, _n, _t, nv in changes)
+            if not messagebox.askyesno(
+                    "Apply all",
+                    "Write these fields?\n\n%s" % summary,
+                    parent=self):
+                return
+            ok_n = 0
+            for lab, node, typed, _nv in changes:
+                if apply_node(node, lab, typed, confirm=False):
+                    ok_n += 1
+            messagebox.showinfo(
+                "Apply all",
+                "Wrote %d field(s). Other boxes (name/race/class) were left as-is."
+                % ok_n,
+                parent=self)
+
+        all_row = ttk.Frame(info)
+        all_row.pack(fill="x", padx=6, pady=4)
+        ttk.Button(
+            all_row, text="Apply all Level / Coins…",
+            command=apply_all_numeric,
+        ).pack(side="left")
+        ttk.Label(
+            all_row,
+            text="(Apply on one field no longer resets the others)",
+            foreground="#555",
+        ).pack(side="left", padx=8)
+
 # Playtime as days / hours / minutes / seconds (stored as uint32 seconds)
         pt_row = ttk.Frame(info)
         pt_row.pack(fill="x", padx=6, pady=2)
@@ -14708,7 +15865,12 @@ class CharacterEditor(tk.Toplevel):
                 total_sec = int(playtime_node["value"])
             except (TypeError, ValueError):
                 total_sec = 0
-        if total_sec < 0:
+        if total_sec < 0 or total_sec == 0xFFFFFFFF:
+            # 0xFFFFFFFF (4294967295) is the standard "never set" sentinel
+            # for a uint32 - seen on fresh characters that have never
+            # actually accumulated playtime yet. The game itself reads
+            # this as 0, not ~49710 days; display should match that
+            # rather than showing the raw sentinel literally.
             total_sec = 0
         d0 = total_sec // 86400
         h0 = (total_sec % 86400) // 3600
@@ -15210,14 +16372,19 @@ class CharacterEditor(tk.Toplevel):
         and Elf confirmed a clean, race-independent split:
             modelIds byte 0-3: gender (41 02 27 34 male / 91 02 93 65 female)
             modelIds byte 4-7: hair/race - untouched by a gender change
-        and that PlayerCustomizationSelectorCRCs.modelCRCs, read as
-        eight 4-byte chunks, moves chunks 0/2/3 with gender the same
-        way. There's no known universal constant for those CRC chunks
-        (unlike the modelIds prefix), so this always prefers a real
-        donor - another character in this save whose own modelIds
-        prefix confidently matches the target gender - and copies only
-        the donor's gender-linked bytes. Neither this character's nor
-        the donor's hair/race bytes are ever touched.
+        modelIds is therefore always set from GENDER_MODEL_PREFIX
+        directly - no donor needed for that part.
+
+        PlayerCustomizationSelectorCRCs.modelCRCs, read as eight 4-byte
+        chunks, moves chunks 0/2/3 with gender the same way, but there's
+        no known universal constant for those CRC chunks (unlike the
+        modelIds prefix), so THAT part still prefers a real donor -
+        another character in this save whose own modelIds prefix
+        confidently matches the target gender - and copies only the
+        donor's gender-linked chunks. Neither this character's nor the
+        donor's hair/race bytes/chunks are ever touched. Without a
+        donor, modelIds still gets updated (the part that actually
+        changes the visible model); only the CRC mirrors are left as-is.
 
         customization.modelCRCs is assumed to mirror the identical
         chunk layout (it's the other representation of the same
@@ -15351,35 +16518,40 @@ class CharacterEditor(tk.Toplevel):
                         ",".join(str(c) for c in GENDER_SELECTOR_CHUNKS),
                         tag))
 
-        if donor_model_bytes is not None:
-            new_model_bytes = donor_model_bytes[:4] + cur_model_bytes[4:]
-            if new_model_bytes != cur_model_bytes:
-                edits.append((model_ids_node, new_model_bytes))
-                notes.append(
-                    "modelIds bytes 0-3 -> donor's (%s), hair/race bytes "
-                    "unchanged" % donor_label)
-
-            _swap_chunks(
-                cur_selector_crcs_node, donor_selector_crcs_bytes,
-                "PlayerCustomizationSelectorCRCs.modelCRCs",
-                confirmed=True)
-            _swap_chunks(
-                cur_model_crcs_node, donor_model_crcs_bytes,
-                "customization.modelCRCs",
-                confirmed=False)
-
-            if len(edits) == 1:
-                notes.append(
-                    "modelIds/modelCRCs already matched %s - only the "
-                    "gender flag itself was stale." % gender_name)
-        else:
+        # modelIds bytes 0-3: always use the confirmed universal constant,
+        # never gated behind finding a donor - this was the actual bug
+        # behind "the gender button does nothing" when there's no other-
+        # gender character in the same save to copy from. GENDER_MODEL_
+        # PREFIX is confirmed race-independent (see its own comment), so
+        # it needs no donor at all, unlike the CRC mirrors below.
+        new_model_bytes = GENDER_MODEL_PREFIX[new_gender] + cur_model_bytes[4:]
+        if new_model_bytes != cur_model_bytes:
+            edits.append((model_ids_node, new_model_bytes))
             notes.append(
-                "No same-file character confidently identified as %s "
-                "(by modelIds prefix) - modelIds/modelCRCs left "
-                "unchanged, only the gender flag itself was updated. "
-                "The character may still visually look like its "
-                "previous gender until you re-customize in-game or a "
-                "%s donor exists in this file." % (gender_name, gender_name))
+                "modelIds bytes 0-3 -> %s (confirmed constant), hair/race "
+                "bytes unchanged" % gender_name)
+        else:
+            notes.append("modelIds already matched %s" % gender_name)
+
+        # The CRC mirrors have no known universal constant (unlike
+        # modelIds above), so they still genuinely need a real same-file
+        # donor of the target gender - this part can't work without one.
+        _swap_chunks(
+            cur_selector_crcs_node, donor_selector_crcs_bytes,
+            "PlayerCustomizationSelectorCRCs.modelCRCs",
+            confirmed=True)
+        _swap_chunks(
+            cur_model_crcs_node, donor_model_crcs_bytes,
+            "customization.modelCRCs",
+            confirmed=False)
+        if donor_model_bytes is None:
+            notes.append(
+                "No same-file character confidently identified as %s (by "
+                "modelIds prefix), so the modelCRCs/SelectorCRCs CRC "
+                "mirrors couldn't be updated - there's no known universal "
+                "constant for those the way there is for modelIds. The "
+                "visible model itself is still changed by the modelIds "
+                "edit above." % gender_name)
 
         msg = "Change gender to %s?\n\n%s" % (gender_name, "\n".join(notes))
         if not messagebox.askyesno("Confirm gender change", msg, parent=self):
@@ -16292,11 +17464,10 @@ class CharacterEditor(tk.Toplevel):
         parent = self._tab_quests
         ttk.Label(
             parent,
-            text="Quest Component QB field: snappy-compressed BSON. We can "
-                 "list QID hashes and rough state strings when present, but "
-                 "the quest graph (objectives, flags, island links) is still "
-                 "mostly opaque — not the same as in-game quest log titles. "
-                 "No safe editor for this yet.",
+            text="Quest Component QB field: each QID is a per-island quest "
+                 "graph node (not a personal log). Known names include the "
+                 "Basics / Elise / Rupert starter chain. Display only — "
+                 "the game re-evaluates quest state on load.",
             foreground="#555", wraplength=720,
         ).pack(anchor="w", padx=8, pady=6)
 
@@ -16306,47 +17477,52 @@ class CharacterEditor(tk.Toplevel):
                 qb_node = n
                 break
 
-        cols = ("qid", "state", "location", "detail")
+        cols = ("qid", "name", "status")
         tree = ttk.Treeview(parent, columns=cols, show="headings",
                             height=16, selectmode="browse")
-        for col, text, w in (("qid", "QID", 100),
-                             ("state", "State", 120),
-                             ("location", "Location", 160),
-                             ("detail", "Detail", 360)):
+        for col, text, w in (
+                ("qid", "QID", 120),
+                ("name", "Name", 280),
+                ("status", "Status", 140)):
             tree.heading(col, text=text)
             tree.column(col, width=w, anchor="w")
         tree.pack(fill="both", expand=True, padx=8, pady=4)
 
         if qb_node is None:
-            tree.insert("", "end", values=("", "", "", "(no QB field)"))
+            tree.insert("", "end", values=("", "", "(no QB field)"))
             return
 
         ok, info = decode_quest_blob(qb_node["value"])
         if not ok:
             tree.insert(
                 "", "end",
-                values=("", "", "", "decode failed: %s" % info.get("error")))
+                values=("", "", "decode failed: %s" % info.get("error")))
             return
 
         quests = info.get("quests") or []
         if not quests:
             tree.insert(
                 "", "end",
-                values=("", "", "",
-                        "QB %d bytes, decompressed %s — no QID entries found"
+                values=("", "", "QB %d bytes, decompressed %s - no QID entries found"
                         % (info.get("raw_len", 0),
                            info.get("decompressed_len", "?"))))
             for s in (info.get("strings") or [])[:40]:
-                tree.insert("", "end", values=("", "", "", s))
+                tree.insert("", "end", values=("", s, ""))
             return
 
-        for q in quests:
+        status_label = {
+            "Started": "Active",
+            "Finalized": "Completed",
+            "Available": "Available",
+            "PreconditionFailed": "Locked",
+        }
+        for q in sorted(quests, key=lambda x: x.get("qid") or 0):
             qid = q.get("qid")
             qid_s = ("0x%08X" % qid) if qid is not None else ""
-            state = q.get("state") or ""
-            loc = q.get("location") or ""
-            detail = ", ".join(q.get("strings") or [])[:200]
-            tree.insert("", "end", values=(qid_s, state, loc, detail))
+            name = QUEST_QID_NAMES.get(qid, "") if qid is not None else ""
+            raw_state = q.get("state") or ""
+            status = status_label.get(raw_state, raw_state)
+            tree.insert("", "end", values=(qid_s, name, status))
 
 
     def _sum_equip_affixes(self, slots):
