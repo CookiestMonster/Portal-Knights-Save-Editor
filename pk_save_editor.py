@@ -4,7 +4,7 @@ pk_save_editor.py - Portal Knights Save Editor (GUI)
 
 One self-contained program that:
   - finds every save file in Steam Cloud / local / Guest folders
-    (characters, universes, and worlds â€” not just character slots)
+    (characters, universes, and worlds — not just character slots)
   - backs them up before touching anything
   - Characters tab:
       list every character, rename safely, multi-tab Character Editor
@@ -13,18 +13,18 @@ One self-contained program that:
       list universe slots, show names from UniverseHeaderData (USHD),
       island counts from ILHD entries
   - Worlds tab:
-      decode location codes (Squire's Knoll, Vacant islands, DLC riftsâ€¦),
+      decode location codes (Squire's Knoll, Vacant islands, DLC rifts…),
       show which universe each world belongs to, browse chest inventories
       stored in BKCK chunks (Server Inventory Component)
   - searchable item picker backed by item_table_merged.json
 
 File naming (16 hex digits):
-  0000000000000000  â€” options / system (NOT characters)
-  0100000000000000  â€” character file (all 9 slots; always this name)
-  0200000000000000  â€” game backup of the character file
-  03â€¦â€¦â€¦â€¦â€¦N          â€” universe; N = slot (cannot be remapped by rename)
-  04â€¦â€¦U0â€¦LOC        â€” world; U = universe id, LOC = location code
-  0600000000000000  â€” misc system blob
+  0000000000000000  — options / system (NOT characters)
+  0100000000000000  — character file (all 9 slots; always this name)
+  0200000000000000  — game backup of the character file
+  03……………N          — universe; N = slot (cannot be remapped by rename)
+  04……U0…LOC        — world; U = universe id, LOC = location code
+  0600000000000000  — misc system blob
 
 Needs: pip install zstandard
        optional: pip install python-snappy  (much faster load/save)
@@ -291,8 +291,8 @@ STEAM_APPID = "374040"
 SLOT_FILES = ["0%d00000000000000" % n for n in range(1, 10)]
 
 # Save-file type prefixes (first byte of the 16-hex-digit filename)
-#   00  small system / options blob (not characters â€” do not treat as CHAR)
-#   01  characters container (always 0100000000000000 â€” all 9 slots)
+#   00  small system / options blob (not characters — do not treat as CHAR)
+#   01  characters container (always 0100000000000000 — all 9 slots)
 #   02  game backup of the character file
 #   03  universe (last hex digit = universe slot 1..9; cannot be freely remapped)
 #   04  world / island (digit 9 / byte 4 = universe id; trailing hex = location code)
@@ -305,7 +305,7 @@ FILE_TYPE_WORLD = 0x04
 FILE_TYPE_SERVER_SESSION = 0x05  # dedicated server session; auto-generated
 FILE_TYPE_MISC = 0x06
 
-# Island / world location codes (last 3â€“5 hex digits of a 04xxxxxxxxxxxxxxxx file).
+# Island / world location codes (last 3–5 hex digits of a 04xxxxxxxxxxxxxxxx file).
 # Sourced from community spreadsheet:
 # https://docs.google.com/spreadsheets/d/1tAr_RdffZ8KrWMcAhmt4W4tay5ArjAxdX5kTEnaxYCk
 WORLD_LOCATIONS = {
@@ -409,8 +409,8 @@ WORLD_LOCATIONS = {
 }
 
 # Only structural world objects stay built-in. NPCs, enemies, props, blocks
-# live in pk_templates.json (edit there or via Templatesâ€¦ in the UI).
-# Chests are not a TemplateCRC list â€” they are detected by inventory components.
+# live in pk_templates.json (edit there or via Templates… in the UI).
+# Chests are not a TemplateCRC list — they are detected by inventory components.
 _BUILTIN_NPC_TEMPLATES = {}
 
 _BUILTIN_WORLD_TEMPLATES = {
@@ -423,7 +423,72 @@ _BUILTIN_WORLD_TEMPLATES = {
     0xE9C11116: "Asteroid Core Block",
 }
 
-# TemplateCRC â†’ map color for block-like props (drawn as terrain-colored tiles)
+# World-portal activation pairs (TemplateCRC swap). Confirmed by diffing
+# pre/post activation world saves — activation is NOT a bool on the entity;
+# the game replaces the "not activated" prop with the "activated" prop
+# (sometimes also shifting Y / dropping Discover Component).
+# inactive_crc -> activated_crc
+PORTAL_ACTIVATION_PAIRS = {
+    # Desert tutorial portal (Squire's Knoll tutorial island)
+    #   not activated: prop_portal_desert01_tutorial
+    #   activated:     Portal Activated Desert01 Tutorial
+    #                  (prop_portal_activated_desert01_tutorial)
+    0xCB6F1C24: 0xB514E43F,
+    # Desert (non-tutorial)
+    #   not activated: prop_portal_desert01
+    #   activated:     Portal Activated Desert01
+    0xFA07B791: 0x2C536E6A,
+    # Grassland
+    #   not activated: prop_portal_grassland01 / prop_portal01_grassland
+    #   activated:     Activated Portal (prop_portal_activated_grassland01)
+    # Note: some islands simply omit the inactive prop until activation;
+    # 0x8627360F then appears at the portal pad (e.g. 34.5, 25.0, 72.5).
+    0x3506F2E8: 0x8627360F,
+    0x85B32490: 0x8627360F,
+    # Volcano
+    #   not activated: prop_portal_volcano01
+    #   activated:     prop_portal_activated_volcano01
+    0x9E4A4A34: 0x092AA07C,
+}
+
+# Reverse map + set of all portal CRCs involved in activation
+PORTAL_ACTIVATED_TO_INACTIVE = {
+    act: ina for ina, act in PORTAL_ACTIVATION_PAIRS.items()
+}
+# When multiple inactives share one activated CRC, keep first; list all:
+PORTAL_ACTIVATED_INACTIVES = {}
+for ina, act in PORTAL_ACTIVATION_PAIRS.items():
+    PORTAL_ACTIVATED_INACTIVES.setdefault(act, []).append(ina)
+
+PORTAL_ACTIVATION_CRCS = set(PORTAL_ACTIVATION_PAIRS.keys()) | set(
+    PORTAL_ACTIVATION_PAIRS.values())
+
+
+def portal_activation_state(crc):
+    """Return 'activated', 'not_activated', or None for a TemplateCRC."""
+    if crc is None:
+        return None
+    crc = int(crc) & 0xFFFFFFFF
+    if crc in PORTAL_ACTIVATION_PAIRS:
+        return "not_activated"
+    if crc in PORTAL_ACTIVATED_TO_INACTIVE or crc in PORTAL_ACTIVATED_INACTIVES:
+        return "activated"
+    return None
+
+
+def portal_activation_partner(crc):
+    """Other TemplateCRC in the activation pair, or None."""
+    if crc is None:
+        return None
+    crc = int(crc) & 0xFFFFFFFF
+    if crc in PORTAL_ACTIVATION_PAIRS:
+        return PORTAL_ACTIVATION_PAIRS[crc]
+    if crc in PORTAL_ACTIVATED_TO_INACTIVE:
+        return PORTAL_ACTIVATED_TO_INACTIVE[crc]
+    return None
+
+
+# TemplateCRC → map color for block-like props (drawn as terrain-colored tiles)
 BLOCK_PROP_COLORS = {
     0x0E8731F4: "#FFFF2F",  # sunstone
     0x6890383A: "#40FFFF",  # moonstone
@@ -462,7 +527,7 @@ _BUILTIN_ENEMY_CRCS = set()
 TEMPLATE_JSON_FILE = "pk_templates.json"
 
 # Optional TemplateCRC -> internal prop name dictionary, extracted from
-# core_game_small.kfc_dir's furniture/prop entries (see format doc Â§16/Â§22
+# core_game_small.kfc_dir's furniture/prop entries (see format doc §16/§22
 # on why TemplateCRC has no shipped name dictionary otherwise). This is a
 # completely different CRC namespace from item_table_merged.json's item
 # hashes - confirmed by zero overlap on an 808-entry sample - so it's
@@ -764,18 +829,30 @@ def npc_name_for_template(crc):
 
 
 def template_label(crc, with_island=False):
-    """Display name for any TemplateCRC, or a hex fallback."""
+    """Display name for any TemplateCRC, or a hex fallback.
+
+    Portal activation pairs get a clear suffix so the map/hover shows
+    \"Activated\" vs \"Not activated\" instead of only the internal prop name.
+    """
     if crc is None:
         return "?"
     crc = int(crc) & 0xFFFFFFFF
     name = npc_name_for_template(crc)
     if not name:
         name = "0x%08X" % crc
+    state = portal_activation_state(crc)
+    if state == "activated":
+        if "activated" not in name.lower():
+            name = "%s (Activated)" % name
+    elif state == "not_activated":
+        if "not activated" not in name.lower() and "inactive" not in name.lower():
+            name = "%s (Not activated)" % name
     if with_island:
         islands = template_islands(crc)
         if islands:
             name = "%s  [%s]" % (name, ", ".join(islands[:3]))
     return name
+
 
 
 # Populate live maps once at import (pk_templates.json if present)
@@ -1096,7 +1173,7 @@ BAG_ARRAYS = {"IBP": "Backpack", "IAB": "Action bar", "ITP": "ITP",
 # load. Character level cap is 30 - corroborated two ways: the community
 # has documented a hard cap of 30 since launch, and this save's own
 # talentLineSelection array stops at level 30 (2,5,10,15,20,25,30).
-# Limits disabled by request â€” write whatever the BSON type can encode.
+# Limits disabled by request — write whatever the BSON type can encode.
 FIELD_LIMITS = {}
 FIELD_ADVISORIES = {}
 
@@ -1236,7 +1313,7 @@ def ensure_remote_data(force=False, log_fn=None):
 def item_table_path():
     """Always use item_table_merged.json next to pk_save_editor.py.
 
-    Never fall back to cwd â€” that was writing a different file than the
+    Never fall back to cwd — that was writing a different file than the
     one the user was watching in Explorer.
     """
     global _ITEM_TABLE_PATH
@@ -1316,7 +1393,7 @@ def _as_u32(value):
 
 
 def _s(value):
-    """Safe string for display / .lower() â€” never crashes on float/None."""
+    """Safe string for display / .lower() — never crashes on float/None."""
     if value is None:
         return ""
     if isinstance(value, float):
@@ -1331,7 +1408,7 @@ def _prefer_item_record(records):
 
     Prefer table_index == 0, then the lowest table_index, then first seen.
     Duplicate hashes in item_table_merged.json are intentional (same II,
-    different table slots) â€” not a merge error.
+    different table slots) — not a merge error.
     """
     if not records:
         return None
@@ -1380,7 +1457,7 @@ def item_by_hash():
 
 
 # Confidence tags used to be shown in the UI ("??", "gap-filled"). Those
-# are research notes, not useful to players â€” names are shown plain.
+# are research notes, not useful to players — names are shown plain.
 CONFIDENCE_TAG = {
     "exact": "", "high": "", "medium": "", "low": "",
     "gap-filled": "", "unmatched": "",
@@ -1400,7 +1477,7 @@ CLASS_NAMES = {
     2313804472: "Druid",
 }
 RACE_BY_NAME = {v: k for k, v in RACE_NAMES.items()}
-# effectPackageIndex often tracks race (Human/Furfolkâ‰ˆ4, Elfâ‰ˆ5)
+# effectPackageIndex often tracks race (Human/Furfolk≈4, Elf≈5)
 RACE_EFFECT_PACKAGE = {
     2958828689: 4,  # Human
     3491209201: 5,  # Elf
@@ -1577,7 +1654,7 @@ def item_records_for_crc(crc):
 def chest_context_categories(crcs):
     """Majority categories among unambiguous items in a chest.
 
-    Only rows with a unique name for their hash vote â€” so shared-hash
+    Only rows with a unique name for their hash vote — so shared-hash
     noise does not dominate. Returns a list of categories sorted by
     frequency (ties keep insertion order).
     """
@@ -1589,7 +1666,7 @@ def chest_context_categories(crcs):
             continue
         names = {(r.get("name") or "") for r in alts}
         if len(names) != 1:
-            continue  # ambiguous â€” don't vote
+            continue  # ambiguous — don't vote
         cat = alts[0].get("category")
         if cat:
             votes[cat] += 1
@@ -1618,16 +1695,16 @@ def item_name_for_crc(crc, table_index=None, category_hint=None):
         return name
     names = {(r.get("name") or "(unnamed)") for r in alts}
     if category_hint and len(names) > 1:
-        # Context resolved it â€” only note if still ambiguous among matches
+        # Context resolved it — only note if still ambiguous among matches
         return name
     idxs = sorted(
         {_table_index_of(r) for r in alts if _table_index_of(r) is not None})
     if len(names) > 1:
-        return "%s  [hash shared Ã—%d, using idx %s]" % (
+        return "%s  [hash shared ×%d, using idx %s]" % (
             name, len(alts),
             _table_index_of(rec) if _table_index_of(rec) is not None else "?")
     if idxs:
-        return "%s  [idx %s; hash Ã—%d]" % (
+        return "%s  [idx %s; hash ×%d]" % (
             name,
             _table_index_of(rec) if _table_index_of(rec) is not None else "?",
             len(alts))
@@ -1853,7 +1930,7 @@ def parse_item_description(desc):
 
     Example source text:
       'Defence 53 +12% Mining Damage Workbench II 6x Copper Bar Class - None'
-      'Damage 40 Type Phys â€¦'
+      'Damage 40 Type Phys …'
 
     Returns dict with keys:
       defence, damage (int|None), affixes, notes, raw
@@ -2412,7 +2489,7 @@ def _ues_from_entity(ent):
 def extract_world_signs(nodes):
     """List sign-like entities (User Editable String Component).
 
-    When wasEdited is False the save often stores no string â€” the game shows
+    When wasEdited is False the save often stores no string — the game shows
     default text for that TemplateCRC. Those signs are still listed so you
     can find them; text may be empty until edited in-game or here.
     NPCs that also carry the component are skipped (see extract_world_npcs).
@@ -2466,7 +2543,7 @@ def extract_world_npcs(nodes):
 
 
 def extract_world_all_templates(nodes):
-    """Every entity that has a TemplateCRC (props, enemies, pads, â€¦)."""
+    """Every entity that has a TemplateCRC (props, enemies, pads, …)."""
     out = []
     for ent in iter_entities(nodes):
         tmpl = _entity_template_crc(ent)
@@ -2539,7 +2616,7 @@ def _npc_grid_positions(n, origin_x, origin_y, origin_z,
                          x_min=_NPC_SAFE_XZ_MIN, x_max=_NPC_SAFE_XZ_MAX,
                          z_min=_NPC_SAFE_XZ_MIN, z_max=_NPC_SAFE_XZ_MAX,
                          max_layers=None):
-    """Lay out n points with unique (x,z) â€” never stack two on the same cell.
+    """Lay out n points with unique (x,z) — never stack two on the same cell.
 
     Fills a compact grid around origin inside the safe band, then +Y layers.
     If the island height caps layers before all NPCs fit, spacing is tightened
@@ -2718,12 +2795,12 @@ def extract_bkck_voxels(nodes, chunk_entry_id=None):
 
 
 def extract_flck_columns(nodes, chunk_entry_id=None):
-    """Best-effort FLCK columnSet â†’ solid columns for map silhouette.
+    """Best-effort FLCK columnSet → solid columns for map silhouette.
 
-    FLCK holds simple/flat ground: columnCount=1024 (32Ã—32), each column
+    FLCK holds simple/flat ground: columnCount=1024 (32×32), each column
     10 bytes. A solid dirt slab is observed as mostly zeros with a block
     id byte (often 1). We treat any column with a non-zero byte as solid
-    block id 1 at local (x,z) with y=0 â€” enough for a top-down outline.
+    block id 1 at local (x,z) with y=0 — enough for a top-down outline.
 
     Returns list of dicts: chunk_id, cells=[(lx,0,lz,block_id), ...]
     """
@@ -2785,11 +2862,11 @@ def extract_flck_columns(nodes, chunk_entry_id=None):
 
 
 def voxel_index_xyz(i):
-    """Local coords from Morton (Z-order) 3D index in a 32Â³ chunk.
+    """Local coords from Morton (Z-order) 3D index in a 32³ chunk.
 
-    Bits of the linear index are interleaved: bit 3kâ†’x, 3k+1â†’y, 3k+2â†’z.
+    Bits of the linear index are interleaved: bit 3k→x, 3k+1→y, 3k+2→z.
     Verified against:
-      - landing-pad surface (251): 4Ã—4 at fixed y
+      - landing-pad surface (251): 4×4 at fixed y
       - vertical stack of 3: consecutive y, fixed x/z
     y is the vertical axis within the chunk.
     """
@@ -2802,7 +2879,7 @@ def voxel_index_xyz(i):
 
 
 def voxel_xyz_index(x, y, z):
-    """Inverse of voxel_index_xyz â€” Morton encode (x,y,z) â†’ linear index."""
+    """Inverse of voxel_index_xyz — Morton encode (x,y,z) → linear index."""
     i = 0
     for b in range(5):
         i |= ((x >> b) & 1) << (3 * b)
@@ -2812,17 +2889,17 @@ def voxel_xyz_index(x, y, z):
 
 
 def chunk_id_to_grid_linear(cid):
-    """Dense sequential ids 0..63 â†’ 8Ã—8 grid (format reference Â§12)."""
+    """Dense sequential ids 0..63 → 8×8 grid (format reference §12)."""
     ci = int(cid)
     return (ci % 8), (ci // 8)
 
 
 def chunk_id_to_grid_bitfield(cid):
-    """Sparse / creative chunk ids â†’ packed XZ cell.
+    """Sparse / creative chunk ids → packed XZ cell.
 
-    Low 6 bits hold the classic bit-field XZ (bits 0+3 â†’ gx, 2+5 â†’ gz).
+    Low 6 bits hold the classic bit-field XZ (bits 0+3 → gx, 2+5 → gz).
     Higher bits are extra vertical / sub-chunk layers used when builds grow
-    tall â€” they must NOT expand world X/Z or the map blows up to thousands
+    tall — they must NOT expand world X/Z or the map blows up to thousands
     of units (entry ids like 2572). Always mask to low 6 for XZ.
     """
     ci = int(cid) & 63
@@ -2834,8 +2911,8 @@ def chunk_id_to_grid_bitfield(cid):
 def chunk_ids_are_sparse_bitfield(ids):
     """True when ids look like the sparse bit-field packing (creative/superflat).
 
-    Classic set is 0,1,4,5,8,9,12,13,32,â€¦ High ids (64+) are the same XZ
-    cells with extra vertical layers â€” mask to low 6 before testing.
+    Classic set is 0,1,4,5,8,9,12,13,32,… High ids (64+) are the same XZ
+    cells with extra vertical layers — mask to low 6 before testing.
     """
     int_ids = []
     for i in ids:
@@ -2868,7 +2945,7 @@ def chunk_id_to_grid(cid):
 
 
 def local_to_world_xz(ox, oz, lx, lz, swap_axes=False):
-    """Chunk origin + local Morton (lx,lz) â†’ game world (x,z).
+    """Chunk origin + local Morton (lx,lz) → game world (x,z).
 
     swap_axes=True  (dense linear islands): world_x=ox+lz, world_z=oz+lx
     swap_axes=False (sparse bit-field islands): world_x=ox+lx, world_z=oz+lz
@@ -2879,7 +2956,7 @@ def local_to_world_xz(ox, oz, lx, lz, swap_axes=False):
 
 
 def world_to_local_xz(wx, wz, ox, oz, swap_axes=False):
-    """Inverse of local_to_world_xz â†’ integer local (lx, lz)."""
+    """Inverse of local_to_world_xz → integer local (lx, lz)."""
     if swap_axes:
         lz = int(round(wx - ox))
         lx = int(round(wz - oz))
@@ -2901,7 +2978,7 @@ def find_chunk_for_world_xz(wx, wz, terrain_origin, swap_axes=False):
 
 
 
-# Voxel id â†’ display name.
+# Voxel id → display name.
 KNOWN_VOXEL_BLOCKS = {
     0: "air",
     1: "dirt",
@@ -3038,7 +3115,7 @@ def classify_inventory_entity(chest):
     container, empty.
 
     Note: weapon stands and single-item IBP display props are both called
-    "mannequin" â€” the game treats them the same way visually.
+    "mannequin" — the game treats them the same way visually.
     """
     counts = {}
     cats = []
@@ -3069,7 +3146,7 @@ def classify_inventory_entity(chest):
                   if "Armor" in c or c in ("Vanity", "Vanity DLC", "Capes",
                                            "Ring"))
 
-    # Inventory attached to a trader NPC entity â†’ always trader stock
+    # Inventory attached to a trader NPC entity → always trader stock
     tmpl = chest.get("template")
     if tmpl is not None and (int(tmpl) & 0xFFFFFFFF) in TRADER_TEMPLATE_CRCS:
         return "trader stock", counts
@@ -3077,8 +3154,8 @@ def classify_inventory_entity(chest):
     # Armor/vanity display mannequin (multi-slot equip / vanity)
     if ieq >= 2 or veq >= 2 or (ieq >= 1 and n_armor >= 1):
         return "mannequin", counts
-    # Single weapon / tool / small display prop (was "weapon stand") â€”
-    # treat as mannequin. Also covers 1Ã— IBP props that aren't real chests.
+    # Single weapon / tool / small display prop (was "weapon stand") —
+    # treat as mannequin. Also covers 1× IBP props that aren't real chests.
     if total <= 2 and n_weapon >= 1 and n_mount == 0:
         return "mannequin", counts
     if total == 1 and ibp == 1 and n_mount == 0 and ieq == 0:
@@ -3133,9 +3210,9 @@ def treeview_enable_sort(tree, numeric_cols=None):
         # Arrow in heading
         for c in tree["columns"]:
             base = tree.heading(c, "text")
-            base = base.replace(" â–²", "").replace(" â–¼", "")
+            base = base.replace(" ▲", "").replace(" ▼", "")
             if c == col:
-                base = base + (" â–¼" if desc else " â–²")
+                base = base + (" ▼" if desc else " ▲")
             tree.heading(c, text=base)
 
     for col in tree["columns"]:
@@ -3541,7 +3618,7 @@ TALENT_TREES = {
 BUILD_LOADOUTS = {
     "Ranger": {
         "dlc": {
-            "title": "Ranger Multi-Strike â€” DLC",
+            "title": "Ranger Multi-Strike — DLC",
             "armor": {
                 0: 3104953045, 1: 2672550848, 2: 913626198,
                 3: 3106709378, 4: 2287096358, 5: 1930092240,
@@ -3550,7 +3627,7 @@ BUILD_LOADOUTS = {
             "talents": {2: 0, 5: 0, 10: 1, 15: 0, 20: 0, 25: 2, 30: 0},
         },
         "no_dlc": {
-            "title": "Ranger Multi-Strike â€” No DLC",
+            "title": "Ranger Multi-Strike — No DLC",
             "armor": {1: 2509061524},
             "weapons": [1810807307, 847762736, 2868413396, 668457895, 1864781231],
             "talents": {2: 0, 5: 0, 10: 1, 15: 0, 20: 0, 25: 2, 30: 0},
@@ -3558,7 +3635,7 @@ BUILD_LOADOUTS = {
     },
     "Warrior": {
         "dlc": {
-            "title": "Warrior Multi-Strike â€” DLC",
+            "title": "Warrior Multi-Strike — DLC",
             "armor": {
                 0: 2136222787, 1: 2672550848, 2: 862976689,
                 3: 219461321, 4: 3035393544, 5: 1930092240,
@@ -3568,7 +3645,7 @@ BUILD_LOADOUTS = {
             "talents": {2: 0, 5: 2, 10: 0, 15: 1, 20: 0, 25: 2, 30: 0},
         },
         "no_dlc": {
-            "title": "Warrior â€” No DLC",
+            "title": "Warrior — No DLC",
             "armor": {1: 2333163824},
             "weapons": [4140016689, 514333101, 3343746825, 3918858414, 1333976076],
             "talents": {2: 2, 5: 2, 10: 0, 15: 1, 20: 0, 25: 2, 30: 0},
@@ -3576,7 +3653,7 @@ BUILD_LOADOUTS = {
     },
     "Mage": {
         "dlc": {
-            "title": "Mage Multi-Strike â€” DLC",
+            "title": "Mage Multi-Strike — DLC",
             "armor": {
                 0: 2136222787, 1: 2672550848, 2: 3923490102,
                 3: 219461321, 4: 3035393544, 5: 1930092240,
@@ -3585,7 +3662,7 @@ BUILD_LOADOUTS = {
             "talents": {2: 1, 5: 0, 10: 0, 15: 0, 20: 2, 25: 0, 30: 2},
         },
         "no_dlc": {
-            "title": "Mage â€” No DLC",
+            "title": "Mage — No DLC",
             "armor": {1: 752769458},
             "weapons": [3390969908, 3771848935, 302461115],
             "talents": {2: 1, 5: 0, 10: 0, 15: 0, 20: 2, 25: 0, 30: 2},
@@ -3593,7 +3670,7 @@ BUILD_LOADOUTS = {
     },
     "Rogue": {
         "dlc": {
-            "title": "Rogue Multi-Strike â€” DLC only",
+            "title": "Rogue Multi-Strike — DLC only",
             "armor": {
                 0: 2136222787, 1: 1945070512, 2: 913626198,
                 3: 219461321, 4: 3035393544, 5: 1930092240,
@@ -3605,7 +3682,7 @@ BUILD_LOADOUTS = {
     },
     "Druid": {
         "dlc": {
-            "title": "Druid Multi-Strike â€” DLC only",
+            "title": "Druid Multi-Strike — DLC only",
             "armor": {
                 0: 2136222787, 1: 1393362436, 2: 862976689, 3: 219461321,
             },
@@ -3628,7 +3705,7 @@ VANITY_SLOT_CATEGORIES = {
     6: VANITY_CATEGORIES,  # Extra Head (cosmetic 2nd hat/hair)
 }
 
-# Armor slots 0â€“5 only. Extra Head is shown on the Vanity tab.
+# Armor slots 0–5 only. Extra Head is shown on the Vanity tab.
 ARMOR_SLOT_CATEGORIES = {
     0: ARMOR_CATEGORIES,
     1: ARMOR_CATEGORIES,
@@ -4382,7 +4459,7 @@ def bson_encode_scalar(node, new_value):
             raise ValueError("uint32 cannot be negative")
         if v > 0xFFFFFFFF:
             raise ValueError("this field is a 32-bit unsigned integer: "
-                             "0â€“4294967295, got %d" % v)
+                             "0–4294967295, got %d" % v)
         return struct.pack("<I", v)
     if etype == 0x16:
         v = int(new_value)
@@ -4509,7 +4586,7 @@ def bson_remove_element(buf, parent_node, child_node):
     estart = child_node.get("estart")
     vend = child_node.get("vend")
     if estart is None or vend is None:
-        raise ValueError("child node missing estart/vend â€” re-parse first")
+        raise ValueError("child node missing estart/vend — re-parse first")
     if not (parent_node["vstart"] <= estart < vend <= parent_node["vend"]):
         raise ValueError("child element is not inside parent document")
     delta = estart - vend  # negative
@@ -4521,7 +4598,7 @@ def bson_remove_element(buf, parent_node, child_node):
         if dstart == doc_start:
             continue
         # Ancestors above the splice point need their length fixed; any
-        # chain entry at/after estart has shifted â€” chain stores starts
+        # chain entry at/after estart has shifted — chain stores starts
         # from the pre-edit buffer, so only touch starts < estart.
         if dstart < estart:
             cur = struct.unpack_from("<i", buf, dstart)[0]
@@ -4938,7 +5015,7 @@ def parse_save_filename(fname):
     if ftype == FILE_TYPE_OPTIONS and not community:
         return {"type": "options", "universe": None, "location": None,
                 "location_name": None, "community": False,
-                "label": "Options / system (0000â€¦) â€” not characters"}
+                "label": "Options / system (0000…) — not characters"}
     if ftype == FILE_TYPE_CHAR and not community:
         return {"type": "character", "universe": None, "location": None,
                 "location_name": None, "community": False,
@@ -4946,7 +5023,7 @@ def parse_save_filename(fname):
     if ftype == FILE_TYPE_CHAR_BAK and not community:
         return {"type": "character_backup", "universe": None, "location": None,
                 "location_name": None, "community": False,
-                "label": "Characters backup (0200â€¦)"}
+                "label": "Characters backup (0200…)"}
     if ftype == FILE_TYPE_UNIVERSE:
         # Local: last byte is slot. Community: slot still near the start;
         # trailing bytes are a share hash (e.g. 61f77bab).
@@ -4977,17 +5054,17 @@ def parse_save_filename(fname):
             loc = trailing3
         name = WORLD_LOCATIONS.get(loc)
         tag = "Community world" if community else "World"
-        label = "%s U%d Â· %s" % (tag, universe, name or ("0x%X" % loc))
+        label = "%s U%d · %s" % (tag, universe, name or ("0x%X" % loc))
         return {"type": "world", "universe": universe, "location": loc,
                 "location_name": name, "label": label, "community": community}
     if ftype == FILE_TYPE_SERVER_SESSION and not community:
         return {"type": "server_session", "universe": None, "location": None,
                 "location_name": None, "community": False,
-                "label": "Dedicated server session (0500â€¦) â€” auto-generated"}
+                "label": "Dedicated server session (0500…) — auto-generated"}
     if ftype == FILE_TYPE_MISC and not community:
         return {"type": "misc", "universe": None, "location": None,
                 "location_name": None, "community": False,
-                "label": "Misc system file (0600â€¦)"}
+                "label": "Misc system file (0600…)"}
     return {"type": "unknown", "universe": None, "location": None,
             "location_name": None, "community": community,
             "label": "Unknown type 0x%02X (%s)" % (ftype, base)}
@@ -5048,9 +5125,9 @@ def extract_universe_name(doc):
 
     The binary name field is often packed as:
         short_code \\0 alt_path \\0 padding
-    e.g. b'AIW\\x00y/Glitched Mannequin World\\x00â€¦'
+    e.g. b'AIW\\x00y/Glitched Mannequin World\\x00…'
 
-    The in-game list shows the *short* code (AIW, More Trophies, â€¦), not the
+    The in-game list shows the *short* code (AIW, More Trophies, …), not the
     longer path-like segment. Prefer the first non-empty segment; if a later
     segment looks more like a title (spaces, no slash) use that instead.
     """
@@ -5103,7 +5180,7 @@ def extract_universe_gameplay_mode(doc):
 
     Authoritative Creative vs Adventure flag for the whole universe.
     World filenames still use story location ids, so this must be read
-    from the parent universe file â€” not inferred from the world path.
+    from the parent universe file — not inferred from the world path.
     """
     if not doc:
         return None
@@ -5132,7 +5209,7 @@ def extract_universe_gameplay_mode(doc):
 
 
 def extract_cipi_islands(doc):
-    """Parse CIPI CustomIslandPlanetInfo â†’ list of island slot dicts.
+    """Parse CIPI CustomIslandPlanetInfo → list of island slot dicts.
 
     Each dict: clusterId, islandId, name, templateId, themeCRC, location
     where location = (clusterId << 8) | islandId when both are ints
@@ -5173,12 +5250,12 @@ def extract_cipi_islands(doc):
                         continue
                     val = sub.get("value")
                     if isinstance(val, (bytes, bytearray)):
-                        # Binary (0x05) is common â€” 64-byte padded name
+                        # Binary (0x05) is common — 64-byte padded name
                         name = val.split(b"\x00")[0].decode(
                             "utf-8", "replace").strip()
                     elif isinstance(val, str):
                         name = val.split("\x00")[0].strip()
-                    # Some builds nest another {name: â€¦} layer
+                    # Some builds nest another {name: …} layer
                     if not name and sub.get("children"):
                         for sub2 in sub["children"]:
                             if sub2.get("key") == "name":
@@ -5190,7 +5267,7 @@ def extract_cipi_islands(doc):
                                     name = v2.split("\x00")[0].strip()
         return iid, name, template, theme
 
-    # Walk cluster â†’ islands arrays
+    # Walk cluster → islands arrays
     for n in _walk(nodes):
         if n.get("key") != "islandClusters" or not n.get("children"):
             continue
@@ -5234,7 +5311,7 @@ def resolve_world_display_name(info, universe_meta=None, dctx=None,
     """Best label for a world: CIPI custom name for Creative, else story loc.
 
     Creative world files still carry story location codes in the filename
-    (e.g. 0xA0B â†’ Tomb Of C'Thiris), but the player-visible name is
+    (e.g. 0xA0B → Tomb Of C'Thiris), but the player-visible name is
     CIPI.islandName on the parent universe (e.g. 'canyoufindthis' or
     'Blueprint'). Returns e.g. 'canyoufindthis [Creative]'.
     """
@@ -5312,7 +5389,7 @@ def resolve_world_display_name(info, universe_meta=None, dctx=None,
         if name:
             return "%s [Creative]" % name
         # templateId like Homeland/CreativeB is a slot class, not the
-        # player-facing title â€” only use as last resort.
+        # player-facing title — only use as last resort.
         tmpl = (cipi.get("templateId") or "").strip()
         if tmpl and tmpl.lower() not in ("homeland",):
             return "%s [Creative]" % tmpl
@@ -5330,7 +5407,7 @@ def island_location_from_entry_id(entry_id):
     """Map an ILHD entry id to a WORLD_LOCATIONS name.
 
     Low 16 bits of the entry id are the location code
-    (0x01000100 â†’ 0x0100 Squire's Knoll). DLC may need low 20 bits.
+    (0x01000100 → 0x0100 Squire's Knoll). DLC may need low 20 bits.
     """
     lo16 = entry_id & 0xFFFF
     lo20 = entry_id & 0xFFFFF
@@ -5426,7 +5503,7 @@ def extract_universe_pthd_summary(nodes):
         for e in events[:40]:
             lines.append("  %s" % e)
         if len(events) > 40:
-            lines.append("  â€¦ +%d more" % (len(events) - 40))
+            lines.append("  … +%d more" % (len(events) - 40))
 
     seen = set()
     out = []
@@ -5617,7 +5694,7 @@ def bundled_dict_path():
 
 
 def guess_dict_path():
-    """Find an existing pk_dict.bin â€” script dir, user data, common spots."""
+    """Find an existing pk_dict.bin — script dir, user data, common spots."""
     userprofile = os.environ.get("USERPROFILE", "") or os.path.expanduser("~")
     desk = desktop_dir()
     candidates = [
@@ -5772,7 +5849,7 @@ def extract_dict_from_exe(exe_path, dest_path=None):
     since it means the dictionary didn't come from their own game.
 
     Writes via a temp file in a known-writable folder (never assumes
-    Desktop exists â€” OneDrive / missing Desktop caused
+    Desktop exists — OneDrive / missing Desktop caused
     FileNotFoundError on pk_dict.bin.tmp-PID for some users).
     """
     candidates = []
@@ -5919,7 +5996,7 @@ class App(tk.Tk):
         # click. Defer slightly so the window is up and the dict is ready.
         self.after(200, self._autoload_characters)
         # Kick off an incremental chest-count scan in the background once
-        # the dict is available â€” only worlds that are new or changed.
+        # the dict is available — only worlds that are new or changed.
         self.after(400, self._autoload_world_scan)
 
     def report_callback_exception(self, exc, val, tb):
@@ -5940,7 +6017,7 @@ class App(tk.Tk):
         try:
             messagebox.showerror(
                 "Unexpected error",
-                "%s\n\nUse Copy log / Save logâ€¦ at the bottom if you want "
+                "%s\n\nUse Copy log / Save log… at the bottom if you want "
                 "to share the full log." % val)
         except Exception:
             pass
@@ -6063,7 +6140,7 @@ class App(tk.Tk):
         self.content_nb = ttk.Notebook(self)
         self.content_nb.pack(fill="both", expand=True, **pad)
 
-        # Characters tab â€” max 10 slots, keep the list compact and put
+        # Characters tab — max 10 slots, keep the list compact and put
         # actions *under* it (pack bottom first so side=left tree can't
         # shove the buttons off to the right).
         self.tab_chars = ttk.Frame(self.content_nb)
@@ -6082,13 +6159,13 @@ class App(tk.Tk):
 
         char_actions2 = ttk.Frame(self.tab_chars)
         char_actions2.pack(side="bottom", fill="x", padx=6, pady=(0, 6))
-        ttk.Button(char_actions2, text="Character Editorâ€¦",
+        ttk.Button(char_actions2, text="Character Editor…",
                    command=self.open_character_editor).pack(side="left",
                                                            padx=(0, 6))
-        ttk.Button(char_actions2, text="Edit fieldsâ€¦",
+        ttk.Button(char_actions2, text="Edit fields…",
                    command=self.open_field_editor).pack(side="left", padx=4)
         ttk.Label(char_actions2,
-                  text="Select a character, then Edit fieldsâ€¦",
+                  text="Select a character, then Edit fields…",
                   foreground="#555").pack(side="left", padx=8)
 
         list_frame = ttk.Frame(self.tab_chars)
@@ -6136,8 +6213,8 @@ class App(tk.Tk):
                    command=self.open_selected_universe).pack(side="left", padx=6)
         ttk.Label(
             univ_actions,
-            text="Warning: universe slot is baked into the filename â€” "
-                 "do not rename 0300â€¦ files to change slots.",
+            text="Warning: universe slot is baked into the filename — "
+                 "do not rename 0300… files to change slots.",
             foreground="#a60",
         ).pack(side="left", padx=8)
 
@@ -6209,42 +6286,42 @@ class App(tk.Tk):
             command=self.open_selected_world)
         self.world_open_btn.pack(side="left", padx=6)
         self.world_inv_btn = ttk.Button(
-            world_actions2, text="Inventoriesâ€¦",
+            world_actions2, text="Inventories…",
             command=self.open_world_chests)
         self.world_inv_btn.pack(side="left")
         self.world_analysis_btn = ttk.Button(
-            world_actions2, text="Analysisâ€¦",
+            world_actions2, text="Analysis…",
             command=self.open_world_analysis)
         self.world_analysis_btn.pack(side="left", padx=4)
         self.world_signs_btn = ttk.Button(
-            world_actions2, text="Signsâ€¦", command=self.open_world_signs)
+            world_actions2, text="Signs…", command=self.open_world_signs)
         self.world_signs_btn.pack(side="left", padx=4)
         self.world_npcs_btn = ttk.Button(
-            world_actions2, text="NPCs / spawnsâ€¦",
+            world_actions2, text="NPCs / spawns…",
             command=self.open_world_npcs)
         self.world_npcs_btn.pack(side="left", padx=4)
         self.world_map_btn = ttk.Button(
-            world_actions2, text="Mapâ€¦", command=self.open_world_map)
+            world_actions2, text="Map…", command=self.open_world_map)
         self.world_map_btn.pack(side="left", padx=4)
         self.world_3d_btn = ttk.Button(
-            world_actions2, text="3Dâ€¦", command=self.open_world_3d_preview)
+            world_actions2, text="3D…", command=self.open_world_3d_preview)
         self.world_3d_btn.pack(side="left", padx=4)
         self.world_voxels_btn = ttk.Button(
-            world_actions2, text="Terrain / voxelsâ€¦",
+            world_actions2, text="Terrain / voxels…",
             command=self.open_world_voxels)
         self.world_voxels_btn.pack(side="left", padx=4)
         ttk.Button(
-            world_actions3, text="Custom savesâ€¦",
+            world_actions3, text="Custom saves…",
             command=self.install_github_custom_save,
         ).pack(side="left", padx=(0, 8))
-        ttk.Button(world_actions3, text="Templatesâ€¦",
+        ttk.Button(world_actions3, text="Templates…",
                    command=self.open_template_editor).pack(side="left", padx=4)
         ttk.Button(
-            world_actions3, text="Refresh dataâ€¦",
+            world_actions3, text="Refresh data…",
             command=lambda: self._ensure_github_data(force=True),
         ).pack(side="left", padx=4)
         ttk.Button(
-            world_actions3, text="Strip to padâ€¦",
+            world_actions3, text="Strip to pad…",
             command=self.strip_world_to_landing_pad,
         ).pack(side="left", padx=4)
         ttk.Label(
@@ -6274,13 +6351,13 @@ class App(tk.Tk):
         log_btns.pack(fill="x", padx=6, pady=(4, 0))
         ttk.Button(log_btns, text="Copy log",
                    command=self.copy_log).pack(side="left")
-        ttk.Button(log_btns, text="Save logâ€¦",
+        ttk.Button(log_btns, text="Save log…",
                    command=self.save_log).pack(side="left", padx=6)
         ttk.Button(log_btns, text="Clear log",
                    command=self.clear_log).pack(side="left")
         ttk.Label(
             log_btns,
-            text="Only written to disk when you click Save logâ€¦",
+            text="Only written to disk when you click Save log…",
             foreground="#666",
         ).pack(side="left", padx=10)
         self.log_text = tk.Text(f6, height=6, wrap="word", state="disabled")
@@ -6293,7 +6370,7 @@ class App(tk.Tk):
         self.log_text.configure(state="disabled")
 
     def get_log_text(self):
-        """Full log contents (in-memory only until Save logâ€¦)."""
+        """Full log contents (in-memory only until Save log…)."""
         try:
             return self.log_text.get("1.0", "end-1c")
         except Exception:
@@ -6387,12 +6464,12 @@ class App(tk.Tk):
         for label, root, fname, full, info, mtime in self._all_saves:
             if allowed is not None and info["type"] not in allowed:
                 continue
-            display = "[%s] %s â€” %s" % (label, info["label"], fname)
+            display = "[%s] %s — %s" % (label, info["label"], fname)
             values.append(display)
             self._save_lookup[display] = full
         self.save_combo["values"] = values
         if values:
-            # When filtering Characters, prefer the real 01â€¦ file over backup
+            # When filtering Characters, prefer the real 01… file over backup
             pick = 0
             if filt == "Characters":
                 for i, v in enumerate(values):
@@ -6400,7 +6477,7 @@ class App(tk.Tk):
                         pick = i
                         break
                 self.log("Characters filter: select 0100000000000000, then "
-                         "Load selected. (0000â€¦ and 0300â€¦ are not characters.)")
+                         "Load selected. (0000… and 0300… are not characters.)")
             self.save_combo.current(pick)
             self.savefile_path.set(self._save_lookup[values[pick]])
             self._update_file_info_label()
@@ -6432,7 +6509,7 @@ class App(tk.Tk):
             bits.append("%s bytes" % "{:,}".format(sz))
         except OSError:
             pass
-        self.file_info_var.set(" Â· ".join(bits))
+        self.file_info_var.set(" · ".join(bits))
 
     def show_naming_help(self):
         msg = (
@@ -6441,25 +6518,25 @@ class App(tk.Tk):
             "All files live in the Steam Cloud remote folder (or local\n"
             "Saved Games\\portal_knights) and are 16 hex digits long.\n\n"
             "00 000000 00000000\n"
-            "  Options / system blob. Small file. NOT characters â€” loading\n"
+            "  Options / system blob. Small file. NOT characters — loading\n"
             "  it on the Characters tab will correctly show no names.\n\n"
             "01 000000 00000000\n"
-            "  Character file â€” ALWAYS this exact name. Holds all 9\n"
+            "  Character file — ALWAYS this exact name. Holds all 9\n"
             "  character slots. Editing it affects every character.\n"
             "  Always backup before changing (use the Backup button).\n\n"
             "02 000000 00000000\n"
             "  Automatic backup of the character file created by the game.\n\n"
             "03 000000 0000000N\n"
-            "  Universe file. N (last digit) is the universe SLOT (1â€“9).\n"
+            "  Universe file. N (last digit) is the universe SLOT (1–9).\n"
             "  The slot is part of the filename and cannot be changed by\n"
-            "  renaming â€” the game will ignore a mismatched slot. Overwriting\n"
+            "  renaming — the game will ignore a mismatched slot. Overwriting\n"
             "  a universe that already has the same name will wipe its worlds.\n\n"
             "04 000000 U0 LLLLLL\n"
             "  World / island file.\n"
-            "  Â· Digit at position 10 (0-based index 9) / byte 4 = universe id\n"
-            "  Â· Last 3 (or 5 for DLC) hex digits = location code\n"
-            "  Examples: â€¦0100 = Squire's Knoll, â€¦050b = Vacant Grassland,\n"
-            "  â€¦040f = Isle of Toblis.\n"
+            "  · Digit at position 10 (0-based index 9) / byte 4 = universe id\n"
+            "  · Last 3 (or 5 for DLC) hex digits = location code\n"
+            "  Examples: …0100 = Squire's Knoll, …050b = Vacant Grassland,\n"
+            "  …040f = Isle of Toblis.\n"
             "  Full location list is built into this tool (WORLD_LOCATIONS).\n\n"
             "06 000000 00000000\n"
             "  Misc system file seen on some installs.\n\n"
@@ -6528,11 +6605,11 @@ class App(tk.Tk):
         for e in c.entries:
             tags[e["tag"]] = tags.get(e["tag"], 0) + 1
         emit("  tags: " + ", ".join(
-            "%sÃ—%d" % (t.decode("ascii", "replace"), n)
+            "%s×%d" % (t.decode("ascii", "replace"), n)
             for t, n in sorted(tags.items(), key=lambda kv: (-kv[1], kv[0]))))
 
         has_dict = self.dctx is not None or self._ensure_dict()
-        # ALL entries â€” no cap
+        # ALL entries — no cap
         for e in c.entries:
             chunk = c.chunk(e)
             tag_s = e["tag"].decode("ascii", "replace")
@@ -6705,7 +6782,7 @@ class App(tk.Tk):
         return candidates
 
     def restore_character_backup(self):
-        """Copy the game backup (0200â€¦) or a .bak over 0100000000000000."""
+        """Copy the game backup (0200…) or a .bak over 0100000000000000."""
         path = self.savefile_path.get()
         info = parse_save_filename(path) if path else {}
         # Always target the real character file in the same folder
@@ -6738,13 +6815,13 @@ class App(tk.Tk):
             try:
                 c = load_container(bak_path)
                 n = sum(1 for e in c.entries if e["tag"] == b"CHAR")
-                details.append("%s â€” %d CHAR entr(y/ies), %d bytes"
+                details.append("%s — %d CHAR entr(y/ies), %d bytes"
                                % (label, n, os.path.getsize(bak_path)))
                 if n > best_count:
                     best_count = n
                     best = (label, bak_path, n)
             except Exception as ex:
-                details.append("%s â€” unreadable (%s)" % (label, ex))
+                details.append("%s — unreadable (%s)" % (label, ex))
         if best is None:
             messagebox.showerror("Backup unreadable", "\n".join(details))
             return
@@ -6772,7 +6849,7 @@ class App(tk.Tk):
             if os.path.isfile(target):
                 shutil.copy2(target, safety)
             shutil.copy2(bak_path, target)
-            self.log("Restored characters from %s â†’ %s (safety: %s)"
+            self.log("Restored characters from %s → %s (safety: %s)"
                      % (bak_path, target, safety))
             messagebox.showinfo(
                 "Restored",
@@ -6789,7 +6866,7 @@ class App(tk.Tk):
             messagebox.showerror("Restore failed", str(ex))
 
     def _warn_if_shrunk(self, path, count):
-        """Optional shrink warning â€” no longer persists pk_seen_entries.json."""
+        """Optional shrink warning — no longer persists pk_seen_entries.json."""
         return
 
 
@@ -6824,7 +6901,7 @@ class App(tk.Tk):
             return False
 
     def load_selected(self):
-        """Load whatever is currently selected â€” character, universe, or world."""
+        """Load whatever is currently selected — character, universe, or world."""
         path = self.savefile_path.get()
         if not path or not os.path.isfile(path):
             messagebox.showerror("No file", "Pick a valid save file first.")
@@ -6841,7 +6918,7 @@ class App(tk.Tk):
             self.content_nb.select(self.tab_world)
             self.load_world_file(path)
         elif info["type"] in ("options", "misc", "unknown"):
-            # Don't pretend these are characters â€” dump and explain
+            # Don't pretend these are characters — dump and explain
             self.log("Selected %s (%s). Use Debug dump for details."
                      % (os.path.basename(path), info["label"]))
             self.debug_dump()
@@ -6863,7 +6940,7 @@ class App(tk.Tk):
         self.log("Universes on disk: %d" % n)
 
     def refresh_universe_list(self, quick=False):
-        """Fill the Universes tab from discovered 03â€¦ files."""
+        """Fill the Universes tab from discovered 03… files."""
         # Opportunistic, silent: if the dict wasn't loaded yet (e.g. this
         # is the very first call, before anything else triggered
         # _ensure_dict()), try now so names resolve immediately instead
@@ -6915,11 +6992,11 @@ class App(tk.Tk):
                     break
             except Exception as ex:
                 name = "(error: %s)" % ex
-            # universe 0 is valid â€” do not use `or "?"` (0 is falsy)
+            # universe 0 is valid — do not use `or "?"` (0 is falsy)
             slot_s = info.get("universe")
             if slot_s is None:
                 slot_s = "?"
-            mode_s = mode or "â€”"
+            mode_s = mode or "—"
             iid = self.univ_tree.insert(
                 "", "end",
                 values=(slot_s, name, mode_s, islands, size, mod_s, fname))
@@ -6979,7 +7056,7 @@ class App(tk.Tk):
             messagebox.showerror("Save file error", str(exc))
             return
         hdr_ok, dat_ok = self.container.verify()
-        self.log("Loaded universe %s â€” %d entries, header %s, data %s"
+        self.log("Loaded universe %s — %d entries, header %s, data %s"
                  % (path, self.container.count,
                     "ok" if hdr_ok else "BAD", "ok" if dat_ok else "BAD"))
         uinfo = parse_save_filename(path)
@@ -7031,7 +7108,7 @@ class App(tk.Tk):
         }
         # Recount with names
         self.refresh_universe_list(quick=False)
-        # Log islands â€” prefer CIPI name when Creative
+        # Log islands — prefer CIPI name when Creative
         n_named = 0
         for e in self.container.entries:
             if e["tag"] != b"ILHD":
@@ -7058,7 +7135,7 @@ class App(tk.Tk):
                      % (label, e["id"], meta.get("seed"),
                         meta.get("islandSize")))
         if gameplay_mode == "Creative":
-            self.log("  Creative universe â€” story location names not used")
+            self.log("  Creative universe — story location names not used")
         else:
             self.log("  %d / %d islands matched known location names"
                      % (n_named,
@@ -7146,7 +7223,7 @@ class App(tk.Tk):
         """Re-scan save folders on disk, then rebuild the Worlds list.
 
         The old Refresh only re-drew from a cached _all_saves list, so new
-        04â€¦ files never appeared. This always calls find_saves() first.
+        04… files never appeared. This always calls find_saves() first.
         """
         before = sum(1 for r in getattr(self, "_all_saves", [])
                      if r[4].get("type") == "world")
@@ -7172,7 +7249,7 @@ class App(tk.Tk):
             incremental=True, silent=True))
 
     def refresh_world_list(self, quick=True):
-        """Fill the Worlds tab from discovered 04â€¦ files.
+        """Fill the Worlds tab from discovered 04… files.
 
         Sorted by last-modified (newest first). Chunk counts come from the
         KSC1 entry table (no decompress). Chest counts need decompress and
@@ -7238,7 +7315,7 @@ class App(tk.Tk):
                             chest_n += count_inventory_entities_in_doc(doc)
                     chests = chest_n
                 if n_ilas and chunks == 0:
-                    chunks = "ILASÃ—%d" % n_ilas
+                    chunks = "ILAS×%d" % n_ilas
             except Exception as ex:
                 chunks = "err"
                 if getattr(self, "_debug", False):
@@ -7285,7 +7362,7 @@ class App(tk.Tk):
         dlg.geometry("720x480")
         ttk.Label(
             dlg,
-            text="Names come from pk_templates.json (NPCs, enemies, propsâ€¦). "
+            text="Names come from pk_templates.json (NPCs, enemies, props…). "
                  "Only Sign + Landing Pad are hard-coded. Edit JSON or add below.",
         ).pack(anchor="w", padx=8, pady=6)
 
@@ -7370,7 +7447,7 @@ class App(tk.Tk):
             try:
                 crc = int(raw, 0) & 0xFFFFFFFF
             except ValueError:
-                messagebox.showerror("Bad CRC", "Use hex (0xâ€¦) or decimal.",
+                messagebox.showerror("Bad CRC", "Use hex (0x…) or decimal.",
                                      parent=dlg)
                 return
             try:
@@ -7378,7 +7455,7 @@ class App(tk.Tk):
             except Exception as ex:
                 messagebox.showerror("Save failed", str(ex), parent=dlg)
                 return
-            self.log("Template saved: 0x%08X â†’ %s (%s) in %s"
+            self.log("Template saved: 0x%08X → %s (%s) in %s"
                      % (crc, nm, kind_var.get(), path))
             refill()
             messagebox.showinfo(
@@ -7472,7 +7549,7 @@ class App(tk.Tk):
                 if need:
                     targets.append((iid, full))
             if not targets:
-                # Everything already cached â€” just paint cached counts
+                # Everything already cached — just paint cached counts
                 for iid, full in all_targets:
                     meta = self._world_meta.get(full) or {}
                     if meta.get("chests") is not None and \
@@ -7532,7 +7609,7 @@ class App(tk.Tk):
         if self._world_scan_thread is not None and \
                 self._world_scan_thread.is_alive():
             self._world_scan_cancel.set()
-            self.world_scan_status.set("Cancellingâ€¦")
+            self.world_scan_status.set("Cancelling…")
 
     def _set_scanning_state(self, scanning, total=None):
         state = "disabled" if scanning else "normal"
@@ -7542,7 +7619,7 @@ class App(tk.Tk):
         self.world_scan_cancel_btn.configure(
             state=("normal" if scanning else "disabled"))
         self.world_scan_status.set(
-            "Scanning %d world(s) for chest countsâ€¦" % (total or 0)
+            "Scanning %d world(s) for chest counts…" % (total or 0)
             if scanning else "")
 
     def _poll_world_scan_queue(self):
@@ -7572,7 +7649,7 @@ class App(tk.Tk):
                 elif kind == "progress":
                     done, total = a, b
                     self.world_scan_status.set(
-                        "Scanningâ€¦ %d / %d world(s)" % (done, total))
+                        "Scanning… %d / %d world(s)" % (done, total))
                 elif kind in ("done", "cancelled"):
                     self._set_scanning_state(False)
                     self._world_scan_thread = None
@@ -7599,11 +7676,11 @@ class App(tk.Tk):
     def strip_world_to_landing_pad(self):
         """TEST tool: wipe all blocks + props, keep only the landing pad entity.
 
-        - Zeros BKCK voxelData (dirt, water, pad surface, â€¦)
-        - Removes every nonâ€“landing-pad entity
+        - Zeros BKCK voxelData (dirt, water, pad surface, …)
+        - Removes every non–landing-pad entity
         - Drops empty BKCK chunks from the container (no pad left)
         - Drops ALL FLCK (fluid columns) and ILAS (analysis blobs)
-          â€” these are ~95% of a built-up creative world's size
+          — these are ~95% of a built-up creative world's size
         - Writes once with a rolling .bak backup
 
         Landing pad entity is enough to place blocks again in-game.
@@ -7767,7 +7844,7 @@ class App(tk.Tk):
         if n_pads_kept == 0:
             messagebox.showerror(
                 "No landing pad",
-                "No landing-pad entity found â€” refusing to write an empty "
+                "No landing-pad entity found — refusing to write an empty "
                 "world. File unchanged.")
             return
 
@@ -7805,9 +7882,9 @@ class App(tk.Tk):
         except Exception:
             pass
         self.log(
-            "Strip to pad: %s â€” voxels_cleared=%d ents_removed=%d "
+            "Strip to pad: %s — voxels_cleared=%d ents_removed=%d "
             "pads_kept=%d  BKCK kept/dropped=%d/%d  FLCK dropped=%d  "
-            "ILAS dropped=%d  size %s â†’ %s"
+            "ILAS dropped=%d  size %s → %s"
             % (os.path.basename(path), n_vox_cleared, n_ents_removed,
                n_pads_kept, n_bkck_kept, n_bkck_dropped, n_flck_dropped,
                n_ilas_dropped,
@@ -7817,7 +7894,7 @@ class App(tk.Tk):
             "Cleared %d voxel(s), removed %d entit(y/ies).\n"
             "Pads kept: %d\n"
             "Dropped: %d empty BKCK, %d FLCK, %d ILAS\n\n"
-            "Size: %s â†’ %s bytes\n"
+            "Size: %s → %s bytes\n"
             "Backup: %s.bak\n\n"
             "Reload the world in-game to verify."
             % (n_vox_cleared, n_ents_removed, n_pads_kept,
@@ -7910,16 +7987,16 @@ class App(tk.Tk):
         info = parse_save_filename(path)
         if not hasattr(self, "_universe_meta"):
             self._universe_meta = {}
-        # Must use CIPI/Creative resolution â€” never raw WORLD_LOCATIONS alone,
+        # Must use CIPI/Creative resolution — never raw WORLD_LOCATIONS alone,
         # or Open selected overwrites "canyoufindthis [Creative]" with the
-        # story location code name (Tomb Of C'Thiris, Vacant Polar, â€¦).
+        # story location code name (Tomb Of C'Thiris, Vacant Polar, …).
         base = resolve_world_display_name(
             info,
             universe_meta=self._universe_meta,
             dctx=self.dctx,
             save_rows=getattr(self, "_all_saves", None),
         )
-        display = ("%s â€” %s" % (custom, base)) if custom else base
+        display = ("%s — %s" % (custom, base)) if custom else base
         try:
             scanned_mtime = os.path.getmtime(path)
         except OSError:
@@ -7982,16 +8059,16 @@ class App(tk.Tk):
             )
         except Exception:
             pass
-        self.log("Loaded world %s â€” %s â€” %d entries, header %s, data %s"
+        self.log("Loaded world %s — %s — %d entries, header %s, data %s"
                  % (path, display, self.container.count,
                     "ok" if hdr_ok else "BAD", "ok" if dat_ok else "BAD"))
         tags = {}
         for e in self.container.entries:
             tags[e["tag"]] = tags.get(e["tag"], 0) + 1
         self.log("  tags: " + ", ".join(
-            "%sÃ—%d" % (t.decode("ascii", "replace"), n)
+            "%s×%d" % (t.decode("ascii", "replace"), n)
             for t, n in sorted(tags.items(), key=lambda kv: (-kv[1], kv[0]))))
-        # Only update THIS world's row (do NOT rescan every world â€” that was
+        # Only update THIS world's row (do NOT rescan every world — that was
         # the multi-second stall on Open selected world).
         self._update_world_row(path)
 
@@ -8041,7 +8118,7 @@ class App(tk.Tk):
         if not path:
             messagebox.showinfo(
                 "No world",
-                "Select a world file first (filter â†’ Worlds, or the Worlds tab).")
+                "Select a world file first (filter → Worlds, or the Worlds tab).")
             return
         if not self._ensure_dict():
             return
@@ -8148,7 +8225,7 @@ class App(tk.Tk):
             save_rows=getattr(self, "_all_saves", None))
 
         dlg = tk.Toplevel(self)
-        dlg.title("World analysis â€” %s" % wname)
+        dlg.title("World analysis — %s" % wname)
         dlg.geometry("720x560")
         text = tk.Text(dlg, wrap="word", font=("Courier New", 10))
         text.pack(fill="both", expand=True, padx=8, pady=8)
@@ -8184,7 +8261,7 @@ class App(tk.Tk):
         lines.append("Missing from world (in table, not in any inv): %d"
                      % len(missing))
         if missing:
-            lines.append("  (sample of 40 missing â€” use List missingâ€¦ for full)")
+            lines.append("  (sample of 40 missing — use List missing… for full)")
             for h, nm, cat in missing[:40]:
                 lines.append("  %s  [%s]  0x%08X" % (nm, cat, h))
         lines.append("Stacks below max_stack: %d" % len(non_max))
@@ -8205,7 +8282,7 @@ class App(tk.Tk):
                              "generationVersion", "islandSize"):
                     lines.append("%s = %s" % (k, v))
         else:
-            lines.append("(no seed/size found â€” need matching ILHD)")
+            lines.append("(no seed/size found — need matching ILHD)")
         lines.append("")
         lines.append("=== Universe / PTHD ===")
         if univ_lines:
@@ -8222,7 +8299,7 @@ class App(tk.Tk):
 
         def list_missing():
             md = tk.Toplevel(dlg)
-            md.title("Missing items â€” %d not in world" % len(missing))
+            md.title("Missing items — %d not in world" % len(missing))
             md.geometry("720x480")
             ttk.Label(
                 md,
@@ -8243,7 +8320,7 @@ class App(tk.Tk):
                 tv.insert("", "end", values=(nm, cat, "0x%08X" % h))
             ttk.Button(md, text="Close", command=md.destroy).pack(pady=6)
 
-        ttk.Button(btn_row, text="List missingâ€¦",
+        ttk.Button(btn_row, text="List missing…",
                    command=list_missing).pack(side="left")
         ttk.Button(btn_row, text="Close", command=dlg.destroy).pack(
             side="right")
@@ -8254,7 +8331,7 @@ class App(tk.Tk):
         if not path:
             messagebox.showinfo(
                 "No world",
-                "Select a world file first (filter â†’ Worlds, or the Worlds tab).")
+                "Select a world file first (filter → Worlds, or the Worlds tab).")
             return
         if not self._ensure_dict():
             return
@@ -8278,11 +8355,11 @@ class App(tk.Tk):
         _wname = resolve_world_display_name(
             info, universe_meta=self._universe_meta, dctx=self.dctx,
             save_rows=getattr(self, "_all_saves", None))
-        dlg.title("Inventories â€” %s" % _wname)
+        dlg.title("Inventories — %s" % _wname)
         dlg.geometry("920x560")
         ttk.Label(
             dlg,
-            text="%d inventory entity(ies) (chests, mannequins, pet boxesâ€¦). "
+            text="%d inventory entity(ies) (chests, mannequins, pet boxes…). "
                  "Click column headers to sort. Double-click to edit. "
                  "Empty IBP is normal for mannequins (items live in IEQ)."
                  % len(rows),
@@ -8398,7 +8475,7 @@ class App(tk.Tk):
                         pass
             if match_iids:
                 search_status.set(
-                    "Found in %d chest(s) Â· total count %d"
+                    "Found in %d chest(s) · total count %d"
                     % (chests_with, total_stack))
             else:
                 # Cross-check item_table_merged.json so "missing" is clear
@@ -8407,17 +8484,17 @@ class App(tk.Tk):
                     nm = item_name_for_crc(q_crc)
                     if nm:
                         search_status.set(
-                            "Missing in world Â· 0 in chests Â· "
+                            "Missing in world · 0 in chests · "
                             "item_table: %s" % nm)
                     else:
                         search_status.set(
-                            "Missing in world Â· unknown CRC 0x%08X "
+                            "Missing in world · unknown CRC 0x%08X "
                             "(not in item_table_merged.json)" % q_crc)
                 elif table_hits:
                     names = ", ".join(
                         (r.get("name") or "?") for r in table_hits[:3])
                     search_status.set(
-                        "Missing in world Â· 0 in chests Â· "
+                        "Missing in world · 0 in chests · "
                         "item_table matches: %s" % names)
                 else:
                     search_status.set(
@@ -8432,13 +8509,13 @@ class App(tk.Tk):
             for items in chest_item_index:
                 for crc, _stack, _name in items:
                     present.add(crc)
-            # Query table: empty query â†’ warn (table is huge)
+            # Query table: empty query → warn (table is huge)
             if not q:
                 messagebox.showinfo(
                     "Missing in world",
                     "Type a name fragment or category keyword in "
                     "Find item first (e.g. 'sword', 'helm', 'rift'), "
-                    "then click Missingâ€¦\n\n"
+                    "then click Missing…\n\n"
                     "That filters item_table_merged.json and lists "
                     "matches that are not in any chest here.",
                     parent=dlg)
@@ -8459,7 +8536,7 @@ class App(tk.Tk):
                 if crc not in present:
                     missing.append(rec)
             md = tk.Toplevel(dlg)
-            md.title("Missing in world â€” %r (%d of %d table hits)"
+            md.title("Missing in world — %r (%d of %d table hits)"
                      % (q, len(missing), len(table_hits)))
             md.geometry("720x420")
             ttk.Label(
@@ -8527,7 +8604,7 @@ class App(tk.Tk):
             else None))
         ttk.Button(search_fr, text="Search",
                    command=apply_item_search).pack(side="left", padx=2)
-        ttk.Button(search_fr, text="Missingâ€¦",
+        ttk.Button(search_fr, text="Missing…",
                    command=show_missing_from_table).pack(side="left", padx=2)
         ttk.Button(search_fr, text="Clear",
                    command=lambda: (search_var.set(""),
@@ -8555,7 +8632,7 @@ class App(tk.Tk):
                               % pos)
             for arr in chest["invs"]:
                 slots = inventory_slot_map(arr)
-                detail.insert("end", "\n%s â€” %d item(s)\n"
+                detail.insert("end", "\n%s — %d item(s)\n"
                               % (arr["key"], len(slots)))
                 for si in sorted(slots):
                     entry = slots[si]
@@ -8589,7 +8666,7 @@ class App(tk.Tk):
         tree.bind("<Double-1>", edit_selected)
         btns = ttk.Frame(dlg)
         btns.pack(fill="x", padx=8, pady=6)
-        ttk.Button(btns, text="Edit selected chestâ€¦",
+        ttk.Button(btns, text="Edit selected chest…",
                    command=edit_selected).pack(side="left")
         ttk.Button(btns, text="Close", command=dlg.destroy).pack(side="right")
 
@@ -8612,7 +8689,7 @@ class App(tk.Tk):
         nb.pack(fill="both", expand=True, padx=6, pady=6)
         meta = {}  # iid -> (arr_key, si, entry, fields, arr_node)
 
-        # Prefer opening a tab that actually has items (mannequins â†’ IEQ)
+        # Prefer opening a tab that actually has items (mannequins → IEQ)
         tab_index = 0
         best_tab = 0
         best_count = -1
@@ -8835,7 +8912,7 @@ class App(tk.Tk):
                                             parent=dlg)
                         return
 
-                    # Current slot hash â€” used to bind null-hash names
+                    # Current slot hash — used to bind null-hash names
                     cur_crc = _as_u32(ii.get("value"))
 
                     def on_pick(rec):
@@ -8872,9 +8949,9 @@ class App(tk.Tk):
                                 "Could not re-locate the slot after reload.",
                                 parent=dlg)
                             return
-                        # Same hash already in slot â€” nothing to write
+                        # Same hash already in slot — nothing to write
                         if cur_crc is not None and crc == cur_crc:
-                            self.log("Slot already has 0x%08X â€” no save write."
+                            self.log("Slot already has 0x%08X — no save write."
                                      % crc)
                             return
                         if self.commit_bson_edit(e, fresh_doc, fresh_kind,
@@ -9048,9 +9125,9 @@ class App(tk.Tk):
 
             bf = ttk.Frame(frame)
             bf.pack(fill="x", padx=4, pady=4)
-            ttk.Button(bf, text="Change itemâ€¦",
+            ttk.Button(bf, text="Change item…",
                        command=change_item).pack(side="left")
-            ttk.Button(bf, text="Edit stackâ€¦",
+            ttk.Button(bf, text="Edit stack…",
                        command=edit_stack).pack(side="left", padx=6)
             ttk.Button(bf, text="Copy hash",
                        command=copy_hash).pack(side="left", padx=6)
@@ -9066,7 +9143,7 @@ class App(tk.Tk):
 
 
     def open_world_voxels(self):
-        """Inspect BKCK voxelData â€” 1 cell = 1 block; pad surface = id 251 (16)."""
+        """Inspect BKCK voxelData — 1 cell = 1 block; pad surface = id 251 (16)."""
         path, info = self._resolve_world_path()
         if not path:
             messagebox.showinfo(
@@ -9113,16 +9190,16 @@ class App(tk.Tk):
                     })
 
         dlg = tk.Toplevel(self)
-        dlg.title("Terrain / voxels â€” %s" % (
+        dlg.title("Terrain / voxels — %s" % (
             info.get("location_name") or os.path.basename(path)))
         dlg.geometry("1100x600")
         ttk.Label(
             dlg,
             text=(
                 "1 voxel byte = 1 block. Non-air: %d in %d chunk(s). "
-                "Landing-pad surface = id 251 (expect 16 = 4Ã—4Ã—1). "
+                "Landing-pad surface = id 251 (expect 16 = 4×4×1). "
                 "Id 244 = pad detail/glow (not counted as the 16). "
-                "Dirt=1, coal=10. Slice: X/Z top-down at height Y (Morton 32Â³). y = up."
+                "Dirt=1, coal=10. Slice: X/Z top-down at height Y (Morton 32³). y = up."
                 % (total_nz, len(chunk_summaries))
             ),
             wraplength=1060,
@@ -9160,7 +9237,7 @@ class App(tk.Tk):
             ))
             row_data[iid] = r
 
-        ttk.Label(right, text="2.5D slice (32Ã—32 blocks)").pack(anchor="w")
+        ttk.Label(right, text="2.5D slice (32×32 blocks)").pack(anchor="w")
         ctl = ttk.Frame(right)
         ctl.pack(fill="x", pady=4)
         chunk_ids = sorted({vx["chunk_id"] for vx in chunk_summaries}) or [0]
@@ -9242,10 +9319,10 @@ class App(tk.Tk):
             parts = ["Y=%d chunk=%s" % (y_layer, cid)]
             for b, n in sorted(counts.items()):
                 nm = KNOWN_VOXEL_BLOCKS.get(b, "?")
-                parts.append("%s(%d)Ã—%d" % (nm, b, n))
+                parts.append("%s(%d)×%d" % (nm, b, n))
             legend.config(
                 text="  |  ".join(parts) if counts else
-                "Y=%d chunk=%s â€” empty" % (z, cid))
+                "Y=%d chunk=%s — empty" % (z, cid))
 
         layer_scale.configure(command=lambda v: redraw())
         chunk_cb.bind("<<ComboboxSelected>>", lambda e: redraw())
@@ -9310,7 +9387,7 @@ class App(tk.Tk):
         if not path:
             messagebox.showinfo(
                 "No world",
-                "Select a world file first (filter â†’ Worlds, or the Worlds tab).")
+                "Select a world file first (filter → Worlds, or the Worlds tab).")
             return
         if not self._ensure_dict():
             return
@@ -9330,7 +9407,7 @@ class App(tk.Tk):
         dlg = tk.Toplevel(self)
         if not hasattr(self, "_universe_meta"):
             self._universe_meta = {}
-        dlg.title("Signs â€” %s" % resolve_world_display_name(
+        dlg.title("Signs — %s" % resolve_world_display_name(
             info, universe_meta=self._universe_meta, dctx=self.dctx,
             save_rows=getattr(self, "_all_saves", None)))
         dlg.geometry("780x480")
@@ -9463,7 +9540,7 @@ class App(tk.Tk):
         tree.bind("<Double-1>", edit_sign)
         bf = ttk.Frame(dlg)
         bf.pack(fill="x", padx=8, pady=6)
-        ttk.Button(bf, text="Edit selectedâ€¦",
+        ttk.Button(bf, text="Edit selected…",
                    command=edit_sign).pack(side="left")
         ttk.Button(bf, text="Close", command=dlg.destroy).pack(side="right")
 
@@ -9474,7 +9551,7 @@ class App(tk.Tk):
         if not path:
             messagebox.showinfo(
                 "No world",
-                "Select a world file first (filter â†’ Worlds, or the Worlds tab).")
+                "Select a world file first (filter → Worlds, or the Worlds tab).")
             return
         if not self._ensure_dict():
             return
@@ -9546,7 +9623,7 @@ class App(tk.Tk):
         island_name = resolve_world_display_name(
             info, universe_meta=self._universe_meta, dctx=self.dctx,
             save_rows=getattr(self, "_all_saves", None))
-        dlg.title("NPCs / spawns â€” %s" % island_name)
+        dlg.title("NPCs / spawns — %s" % island_name)
         dlg.geometry("900x520")
         ttk.Label(
             dlg,
@@ -9617,7 +9694,7 @@ class App(tk.Tk):
                 raw_txt = (npc.get("text") or "").strip()
                 if not raw_txt and npc.get("was_edited") is False:
                     raw_txt = ""  # default dialogue not in save
-            text_disp = (raw_txt[:60] + ("â€¦" if len(raw_txt) > 60 else "")) if raw_txt else ""
+            text_disp = (raw_txt[:60] + ("…" if len(raw_txt) > 60 else "")) if raw_txt else ""
             iid = tree.insert("", "end", values=(
                 i + 1,
                 nname,
@@ -9713,7 +9790,7 @@ class App(tk.Tk):
                 messagebox.showerror("Clipboard", str(ex), parent=dlg)
 
         def copy_all():
-            # NPC Control only â€” props/paintings tagged "world" are excluded
+            # NPC Control only — props/paintings tagged "world" are excluded
             try:
                 seen = []
                 seen_set = set()
@@ -9733,7 +9810,7 @@ class App(tk.Tk):
                     seen.append("%s\t%s" % (h, name))
                 iname = str(island_name) if island_name else "?"
                 lines = [
-                    "# NPC templates only â€” %s" % iname,
+                    "# NPC templates only — %s" % iname,
                     "# island=%s" % iname,
                     "# unique=%s  total_npc_instances=%s" % (
                         len(seen), total_npc),
@@ -9880,14 +9957,14 @@ class App(tk.Tk):
                         new_crc = int(raw, 0) & 0xFFFFFFFF
                     except ValueError:
                         messagebox.showerror(
-                            "Bad CRC", "Enter hex (0xâ€¦) or decimal.",
+                            "Bad CRC", "Enter hex (0x…) or decimal.",
                             parent=pd)
                         return
                     new_name = template_label(new_crc)
                 if not messagebox.askyesno(
                         "Confirm replace",
                         "Replace TemplateCRC on %d row(s)?\n\n"
-                        "  â†’  %s  (0x%08X)\n\n"
+                        "  →  %s  (0x%08X)\n\n"
                         "A .bak of the world file is made before the "
                         "first write.\n\n"
                         "IMPORTANT: fully quit Portal Knights (not only\n"
@@ -9916,7 +9993,7 @@ class App(tk.Tk):
                     summary += "\n\nFailed:\n" + "\n".join(
                         "  %s" % m for _d, m in fail[:8])
                     if len(fail) > 8:
-                        summary += "\n  â€¦ and %d more" % (len(fail) - 8)
+                        summary += "\n  … and %d more" % (len(fail) - 8)
                 messagebox.showinfo("Replace done", summary, parent=pd)
                 pd.destroy()
                 dlg.destroy()
@@ -9961,8 +10038,8 @@ class App(tk.Tk):
         def bulk_assign():
             """Assign a pasted list of TemplateCRCs onto NPC slots in this world.
 
-            Workflow: copy unique NPC templates from Sanctuary â†’ open an
-            empty/simple world â†’ Bulk assign â†’ walk the line in-game.
+            Workflow: copy unique NPC templates from Sanctuary → open an
+            empty/simple world → Bulk assign → walk the line in-game.
             Fully quit the game before loading the edited world.
             """
             npc_only = [
@@ -9999,7 +10076,7 @@ class App(tk.Tk):
             layout_var = tk.BooleanVar(value=False)
             ttk.Checkbutton(
                 bd,
-                text="Also lay out in a compact grid (optional â€” off = keep positions)",
+                text="Also lay out in a compact grid (optional — off = keep positions)",
                 variable=layout_var,
             ).pack(anchor="w", padx=8)
 
@@ -10194,7 +10271,7 @@ class App(tk.Tk):
                             except Exception:
                                 label = "?"
                             self.log(
-                                "Bulk NPC [%s] â†’ 0x%08X (%s)"
+                                "Bulk NPC [%s] → 0x%08X (%s)"
                                 % (i + 1, new_crc, label))
                         else:
                             fail.append((i, "write/verify failed"))
@@ -10351,7 +10428,7 @@ class App(tk.Tk):
                  counts["npc"], counts["quest"], counts["trader"]))
 
             if not messagebox.askyesno(
-                    "Crates â†’ NPCs",
+                    "Crates → NPCs",
                     ("Found %d crate(s).\n\n"
                      "Loaded %d npc/quest/trader templates.\n\n"
                      "Every crate gets a different template until all "
@@ -10521,7 +10598,7 @@ class App(tk.Tk):
                     summary += "\n  ... and %d more" % (len(fail) - 10)
 
             messagebox.showinfo(
-                "Crates â†’ NPCs", summary, parent=dlg)
+                "Crates → NPCs", summary, parent=dlg)
             dlg.destroy()
             self.open_world_npcs()
 
@@ -10568,17 +10645,17 @@ class App(tk.Tk):
 
         bf = ttk.Frame(dlg)
         bf.pack(fill="x", padx=8, pady=6)
-        ttk.Button(bf, text="Replace templateâ€¦",
+        ttk.Button(bf, text="Replace template…",
                    command=replace_template).pack(side="left")
-        ttk.Button(bf, text="Bulk assign from listâ€¦",
+        ttk.Button(bf, text="Bulk assign from list…",
                    command=bulk_assign).pack(side="left", padx=4)
-        ttk.Button(bf, text="Crates â†’ NPCs",
+        ttk.Button(bf, text="Crates → NPCs",
                    command=change_crates_to_npcs).pack(side="left", padx=4)
         ttk.Button(bf, text="Tag island on NPCs",
                    command=tag_island).pack(side="left", padx=4)
         ttk.Button(bf, text="Copy selected",
                    command=copy_selected).pack(side="left", padx=4)
-        ttk.Button(bf, text="Copy NPC templatesâ€¦",
+        ttk.Button(bf, text="Copy NPC templates…",
                    command=copy_all).pack(side="left", padx=4)
 
         def show_on_map():
@@ -10600,9 +10677,9 @@ class App(tk.Tk):
             label = vals[1] if len(vals) > 1 else "entity"
             self.open_world_map(focus_pos=pos, focus_label=str(label))
 
-        ttk.Button(bf, text="Show on mapâ€¦",
+        ttk.Button(bf, text="Show on map…",
                    command=show_on_map).pack(side="left", padx=4)
-        ttk.Button(bf, text="Collect all worlds â†’ hereâ€¦",
+        ttk.Button(bf, text="Collect all worlds → here…",
                    command=lambda: self.collect_npcs_into_world(path)).pack(
                        side="left", padx=4)
         def duplicate_selected():
@@ -10685,9 +10762,9 @@ class App(tk.Tk):
             ttk.Button(bf3, text="Duplicate", command=go).pack(side="left")
             ttk.Button(bf3, text="Cancel", command=cd.destroy).pack(side="right")
 
-        ttk.Button(bf, text="Duplicate selectedâ€¦",
+        ttk.Button(bf, text="Duplicate selected…",
                    command=duplicate_selected).pack(side="left", padx=4)
-        ttk.Button(bf, text="Add templateâ€¦",
+        ttk.Button(bf, text="Add template…",
                    command=lambda: self._open_add_template_dialog(
                        dlg, path)).pack(side="left", padx=4)
         ttk.Button(bf, text="Close", command=dlg.destroy).pack(side="right")
@@ -10774,7 +10851,7 @@ class App(tk.Tk):
                 "Scan every world on disk, take one copy of each unique "
                 "NPC TemplateCRC, and insert them into:\n\n%s\n\n"
                 "Positions: flat grid at existing NPC/landing-pad height, "
-                "XZ clamped to ~20â€“110 (safe band), extra layers go UP.\n\n"
+                "XZ clamped to ~20–110 (safe band), extra layers go UP.\n\n"
                 "Backup is made first. Continue?" % target_path):
             return
 
@@ -10787,7 +10864,7 @@ class App(tk.Tk):
                 continue
             world_rows.append(row)
 
-        self.log("Collect NPCs: scanning %d world file(s)â€¦" % len(world_rows))
+        self.log("Collect NPCs: scanning %d world file(s)…" % len(world_rows))
         for row in world_rows:
             wpath = row[3]
             wname = (row[4].get("location_name") or row[2] or wpath)
@@ -10903,7 +10980,7 @@ class App(tk.Tk):
                        for p in positions))
         self.log(
             "Collect NPCs: origin=(%.1f, %.1f, %.1f)  "
-            "XZ [%.0f..%.0f]Ã—[%.0f..%.0f]  dims=%sÃ—%sÃ—%s  "
+            "XZ [%.0f..%.0f]×[%.0f..%.0f]  dims=%s×%s×%s  "
             "positions=%d unique=%d"
             % (ox, oy, oz, x_min, x_max, z_min, z_max,
                width, height, depth, len(positions), uniq))
@@ -10999,7 +11076,7 @@ class App(tk.Tk):
             "NPC Control entities now in file: %d\n"
             "Unique grid positions planned: %d\n\n"
             "If the map shows fewer, the game may still cull duplicates "
-            "or NPCs outside loaded chunks â€” check the Log.\n"
+            "or NPCs outside loaded chunks — check the Log.\n"
             "Restart the game to see them."
             % (total_inserted, target_path, final_n, uniq))
         if remaining:
@@ -11009,7 +11086,7 @@ class App(tk.Tk):
                  % (total_inserted, target_path, final_n))
 
     def _open_add_template_dialog(self, parent_dlg, target_path):
-        """Picker over every known template (NPCs, props, pads, â€¦) that
+        """Picker over every known template (NPCs, props, pads, …) that
         inserts one copy into target_path at chosen or default coords.
 
         Body is copied from a world on disk that already has that CRC.
@@ -11020,7 +11097,7 @@ class App(tk.Tk):
         ttk.Label(
             pd,
             text="Pick a known template (or type a raw hex CRC). A real "
-                 "entity body is copied from another world on disk â€” "
+                 "entity body is copied from another world on disk — "
                  "templates cannot be invented from a CRC alone.",
             wraplength=550,
         ).pack(anchor="w", padx=8, pady=6)
@@ -11087,7 +11164,7 @@ class App(tk.Tk):
                     if not (xs and ys and zs):
                         messagebox.showerror(
                             "Coords",
-                            "Enter all three of X, Y, Z â€” or leave all blank.",
+                            "Enter all three of X, Y, Z — or leave all blank.",
                             parent=pd)
                         return
                     pos = (float(xs), float(ys), float(zs))
@@ -11228,11 +11305,11 @@ class App(tk.Tk):
                 "No source found",
                 "0x%08X (%s) was not found as a real entity in any "
                 "world file on disk.\n\n"
-                "Checked every 04â€¦ world under your save folders.\n"
+                "Checked every 04… world under your save folders.\n"
                 "If it only exists as a name in the template list, "
                 "place it once in-game on any island, save, quit the "
                 "game fully, then try again.\n\n"
-                "Tip: open that island in NPCs/spawns first â€” that "
+                "Tip: open that island in NPCs/spawns first — that "
                 "also caches bodies for Add template."
                 % (crc, label))
             return False
@@ -11432,7 +11509,7 @@ class App(tk.Tk):
                 if p.get("pos"):
                     pads.append(p)
                     claimed.add(_pos_key(p["pos"]))
-            # Everything else with a TemplateCRC (enemies, blocks, propsâ€¦)
+            # Everything else with a TemplateCRC (enemies, blocks, props…)
             for o in extract_world_all_templates(nodes):
                 pk = _pos_key(o.get("pos"))
                 if pk is None or pk in claimed:
@@ -11440,7 +11517,7 @@ class App(tk.Tk):
                 others.append(o)
                 claimed.add(pk)
 
-        # Terrain voxels (Morton 32Â³ per BKCK chunk)
+        # Terrain voxels (Morton 32³ per BKCK chunk)
         terrain_chunks = {}  # chunk_id -> list of (lx, ly, lz, block_id)
         for e, doc, kind, nodes, container in scanned:
             for vx in extract_bkck_voxels(nodes, e.get("id")):
@@ -11453,17 +11530,17 @@ class App(tk.Tk):
                     terrain_chunks[cid] = cells
 
         # FLCK is NOT island ground. On Squire's Knoll every column is the
-        # identical 10-byte pattern 00â€¦01 00 (fluid/default). Merging it
-        # filled the whole 256Ã—256 grid and, with map subsampling, looked
+        # identical 10-byte pattern 00…01 00 (fluid/default). Merging it
+        # filled the whole 256×256 grid and, with map subsampling, looked
         # like scattered dirt blobs. Story-island shape lives in BKCK
         # voxelData; runtime grass is seed-generated and not fully stored.
-        self.log("Map terrain: BKCK-only (FLCK skipped â€” uniform fluid layer)")
+        self.log("Map terrain: BKCK-only (FLCK skipped — uniform fluid layer)")
 
-        # Chunk id â†’ world XZ.
-        # Sparse BKCK id sets (0,1,4,5,8,9,12,13,32,â€¦) pack via bit-field
-        # into a continuous 4Ã—4 disc â€” linear %8 leaves cross-shaped gaps
+        # Chunk id → world XZ.
+        # Sparse BKCK id sets (0,1,4,5,8,9,12,13,32,…) pack via bit-field
+        # into a continuous 4×4 disc — linear %8 leaves cross-shaped gaps
         # (the "4 disconnected blobs" bug on flat creative islands).
-        # Dense sequential ids 0..N use linear 8Ã—8 + local axis swap.
+        # Dense sequential ids 0..N use linear 8×8 + local axis swap.
         terrain_origin = {}  # chunk_id -> (ox, oz)
 
         # Pick the landing-pad entity that actually sits on block-251 surface
@@ -11516,7 +11593,7 @@ class App(tk.Tk):
                 if ranked[0][0] < 64.0:
                     pads[:] = [p for d, p in ranked if d < 64.0]
                 else:
-                    # No pad near 251 â€” keep only the closest entity
+                    # No pad near 251 — keep only the closest entity
                     pads[:] = [ranked[0][1]]
 
         int_ids = []
@@ -11557,10 +11634,10 @@ class App(tk.Tk):
         except Exception:
             pass
 
-        # Pick linear vs bit-field by which mapping puts a 4Ã—4 of block 251
+        # Pick linear vs bit-field by which mapping puts a 4×4 of block 251
         # nearest the landing-pad entity. Id-pattern heuristics alone miss
         # dense creative islands (41/64 chunks) that still use bit-field
-        # packing â€” those rendered as scattered brown continents.
+        # packing — those rendered as scattered brown continents.
         def _pad_align_score(grid_fn, swap):
             if pad_world is None:
                 return 1e9
@@ -11606,7 +11683,7 @@ class App(tk.Tk):
             sparse = False
         else:
             sparse = sparse_guess
-        # No pad â†’ fall back to id heuristic; Creative USHD forces trusted
+        # No pad → fall back to id heuristic; Creative USHD forces trusted
         is_creative = (gameplay_mode == "Creative") or sparse
         swap_axes = not sparse
         grid_fn = chunk_id_to_grid_bitfield if sparse else chunk_id_to_grid_linear
@@ -11617,7 +11694,7 @@ class App(tk.Tk):
         else:
             world_kind = "Story/Generated"
         self.log(
-            "Map grid: %s (%d chunks), axis_swap=%s â€” %s "
+            "Map grid: %s (%d chunks), axis_swap=%s — %s "
             "(pad-align linear=%.1f bitfield=%.1f)"
             % ("sparse-bitfield" if sparse else "linear-8x8",
                len(int_ids), swap_axes, world_kind,
@@ -11628,7 +11705,7 @@ class App(tk.Tk):
             terrain_origin[ci] = (float(gx * 32), float(gz * 32))
 
         if not terrain_origin and pad_world is not None:
-            # Last resort: place every chunk that has a 4Ã—4 pad surface
+            # Last resort: place every chunk that has a 4×4 pad surface
             # so its pad center matches the entity.
             for cid, cells in terrain_chunks.items():
                 # cells are (lx,ly,lz,b)
@@ -11643,9 +11720,9 @@ class App(tk.Tk):
                         pad_world[0] - cx, pad_world[2] - cz)
 
         # Snap grid so landing-pad voxels line up with pad entity.
-        # CRITICAL: prop entities (sunstone, chests, â€¦) already use absolute
+        # CRITICAL: prop entities (sunstone, chests, …) already use absolute
         # world coords that match the pad entity. Only snap terrain when the
-        # pad entity is *not* already sitting on pad surface/detail voxels â€”
+        # pad entity is *not* already sitting on pad surface/detail voxels —
         # otherwise a distant decorative 251 cluster pulls the whole island
         # and every prop ends up in the wrong place.
         snap_dx = snap_dz = 0.0
@@ -11675,7 +11752,7 @@ class App(tk.Tk):
                     if b == 251 and d < 32.0:
                         near_pad_pts.append((wx + 0.5, wz + 0.5, ly, d))
             if already_on_pad:
-                # Entity and voxels share a frame â€” do not shift terrain.
+                # Entity and voxels share a frame — do not shift terrain.
                 snap_dx = snap_dz = 0.0
                 if near_pad_pts:
                     pad_local_y = int(round(
@@ -11933,7 +12010,7 @@ class App(tk.Tk):
     def open_world_map(self, focus_pos=None, focus_label=None):
         """Top-down X/Z map with zoom, pan, and right-click to edit.
 
-        No textures â€” rectangles for chests / signs / NPCs / landing pad.
+        No textures — rectangles for chests / signs / NPCs / landing pad.
         Mouse wheel = zoom, drag = pan, right-click or double-click = open.
 
         focus_pos: optional (x, z) or (x, y, z) to center/highlight.
@@ -11943,7 +12020,7 @@ class App(tk.Tk):
         if not path:
             messagebox.showinfo(
                 "No world",
-                "Select a world file first (filter â†’ Worlds, or the Worlds tab).")
+                "Select a world file first (filter → Worlds, or the Worlds tab).")
             return
         if not self._ensure_dict():
             return
@@ -11956,6 +12033,8 @@ class App(tk.Tk):
                 fz = float(focus_pos[2] if len(focus_pos) > 2 else focus_pos[1])
                 self._map_last_opened_pos = (fx, fz)
                 self._map_focus_label = focus_label or ""
+                # Single external focus — clear any prior multi-hit Find rings
+                self._map_focus_hits = [(fx, fz, focus_label or "")]
             except Exception:
                 pass
         chests, signs, npcs, pads, others = (
@@ -11980,14 +12059,14 @@ class App(tk.Tk):
             save_rows=getattr(self, "_all_saves", None),
         )
         fname = os.path.basename(path)
-        dlg.title("Map â€” %s  Â·  %s" % (world_label, fname))
+        dlg.title("Map — %s  ·  %s" % (world_label, fname))
         dlg.geometry("920x720")
 
         hdr = ttk.Frame(dlg)
         hdr.pack(fill="x", padx=8, pady=4)
         ttk.Label(
             hdr,
-            text="%s  Â·  %s" % (world_label, fname),
+            text="%s  ·  %s" % (world_label, fname),
             font=("Segoe UI", 10, "bold"),
         ).pack(side="left")
         zoom_var = tk.StringVar(value="100%")
@@ -12000,7 +12079,7 @@ class App(tk.Tk):
             foreground="#444",
         ).pack(side="right", padx=12)
 
-        # Layer toggles â€” uncheck to hide that marker type
+        # Layer toggles — uncheck to hide that marker type
         layers = ttk.Frame(dlg)
         layers.pack(fill="x", padx=8, pady=(0, 2))
         ttk.Label(layers, text="Show:").pack(side="left")
@@ -12120,7 +12199,7 @@ class App(tk.Tk):
 
         ttk.Label(
             paint_bar,
-            text="  Y=slider/Surface Â· LMB paint Â· MMB/Shift-LMB pan"
+            text="  Y=slider/Surface · LMB paint · MMB/Shift-LMB pan"
         ).pack(side="left", padx=6)
         ttk.Label(paint_bar, textvariable=paint_status, foreground="#4a9").pack(
             side="left", padx=4)
@@ -12159,12 +12238,12 @@ class App(tk.Tk):
                 ix, iz, terrain_origin, swap_axes)
             if not hit:
                 paint_status.set(
-                    "Outside chunk grid (%d,%d) â€” click painted terrain"
+                    "Outside chunk grid (%d,%d) — click painted terrain"
                     % (ix, iz))
                 return False
             ly = _paint_y_for_column(ix, iz)
             paint_pending[(ix, iz)] = (ly, block_id)
-            paint_status.set("Queued %d cell(s)â€¦" % len(paint_pending))
+            paint_status.set("Queued %d cell(s)…" % len(paint_pending))
             # Live preview on heightmap
             if block_id == 0:
                 terrain_heightmap.pop((ix, iz), None)
@@ -12190,7 +12269,7 @@ class App(tk.Tk):
             n, detail = _write_voxel_edits(
                 path, edits, terrain_origin, swap_axes, chunk_to_entry)
             paint_status.set(detail)
-            self.log("Map paint: %s â†’ %s" % (detail, os.path.basename(path)))
+            self.log("Map paint: %s → %s" % (detail, os.path.basename(path)))
             return n
 
         def _write_voxel_edits(wpath, edits, origins, swap, cid_entry):
@@ -12221,7 +12300,7 @@ class App(tk.Tk):
                     if ch:
                         yield from _walk(ch)
 
-            # Build entry_id â†’ (kind, raw_doc_chunk_id) by reading each BKCK
+            # Build entry_id → (kind, raw_doc_chunk_id) by reading each BKCK
             # so we don't depend on a possibly stale cid_entry map.
             entry_by_chunk = {}  # chunk_id int -> (entry_id, kind)
             for e in container.entries:
@@ -12275,7 +12354,7 @@ class App(tk.Tk):
                     (int(lx), int(ly), int(lz), int(bid) & 0xFF))
 
             if not by_entry:
-                return 0, ("0 cells (skipped %d â€” click on terrain, "
+                return 0, ("0 cells (skipped %d — click on terrain, "
                            "origins=%d)" % (skipped, len(origins)))
 
             new_entries = []
@@ -12336,7 +12415,7 @@ class App(tk.Tk):
                 probe = Container(out)
                 hc, dc = probe.verify()
                 if not (hc and dc):
-                    return 0, "CRC check failed on rebuilt data â€” not saved"
+                    return 0, "CRC check failed on rebuilt data — not saved"
             except Exception as ex:
                 return 0, "Rebuild invalid: %s" % ex
             try:
@@ -12353,7 +12432,7 @@ class App(tk.Tk):
                 # Confirm bytes actually landed
                 on_disk = open(wpath, "rb").read()
                 if on_disk != out:
-                    return 0, "Write mismatch â€” disk != buffer"
+                    return 0, "Write mismatch — disk != buffer"
                 self.container = load_container(wpath)
                 self.savefile_path.set(wpath)
             except Exception as ex:
@@ -12384,12 +12463,12 @@ class App(tk.Tk):
                             verified += 1
             except Exception as ex:
                 self.log("paint verify: %s" % ex)
-            msg = "Saved %d cell(s), verified %d â†’ %s" % (
+            msg = "Saved %d cell(s), verified %d → %s" % (
                 changed, verified, os.path.basename(wpath))
             if skipped:
                 msg += " (%d skipped)" % skipped
             if verified == 0 and changed > 0:
-                msg += " âš  verify failed â€” file may not stick"
+                msg += " ⚠ verify failed — file may not stick"
             self.log("Paint absolute path: %s" % wpath)
             return changed, msg
 
@@ -12436,20 +12515,20 @@ class App(tk.Tk):
                                    outline="#111")
 
         for color, bw, bh, label, oval in (
-                ("#4a90d9", 2, 1, "Chest 2Ã—1", False),
+                ("#4a90d9", 2, 1, "Chest 2×1", False),
                 ("#9b59b6", 1, 1, "Mannequin", False),
                 ("#2ecc71", 1, 1, "Pet/mount", False),
                 ("#e6c84b", 1, 1, "Sign", False),
                 ("#d94a4a", 1, 1, "NPC", True),
                 ("#c0392b", 1, 1, "Enemy", True),
                 ("#7f8c8d", 1, 1, "Other/prop", False),
-                ("#cccccc", 4, 4, "Pad 4Ã—4", False)):
+                ("#cccccc", 4, 4, "Pad 4×4", False)):
             f = ttk.Frame(legend)
             f.pack(side="left", padx=4)
             _legend_icon(f, color, bw, bh, oval=oval)
             ttk.Label(f, text=label).pack(side="left", padx=2)
 
-        # NOTE: must not be named `wrap` â€” that shadows the module-level
+        # NOTE: must not be named `wrap` — that shadows the module-level
         # wrap() used to re-compress BKCK chunks after paint edits.
         map_frame = ttk.Frame(dlg)
         map_frame.pack(fill="both", expand=True, padx=8, pady=4)
@@ -12505,7 +12584,7 @@ class App(tk.Tk):
                 canvas.create_line(gx, m, gx, m + ph, fill="#2a2a2a")
                 canvas.create_line(m, gz, m + pw, gz, fill="#2a2a2a")
 
-            canvas.create_text(m, m - 6, text="Zâ†‘  Xâ†’", fill="#888",
+            canvas.create_text(m, m - 6, text="Z↑  X→", fill="#888",
                                anchor="sw", font=("Segoe UI", 8))
             canvas.create_text(m, m + ph + 10,
                                text="(%.0f, %.0f)" % (min_x, min_z),
@@ -12514,14 +12593,14 @@ class App(tk.Tk):
                                text="(%.0f, %.0f)" % (max_x, max_z),
                                fill="#666", anchor="ne", font=("Segoe UI", 8))
 
-            # Footprint in game blocks (width X Ã— depth Z), scaled to map.
+            # Footprint in game blocks (width X × depth Z), scaled to map.
             # Pixels per world unit on each axis:
             unit_x = pw / world_w
             unit_z = ph / world_h
 
             def add_footprint(x, z, bw, bh, color, kind, label, payload,
                               oval=False, outline="#111"):
-                """Draw a bwÃ—bh block footprint centered on (x,z)."""
+                """Draw a bw×bh block footprint centered on (x,z)."""
                 cx, cy = world_to_canvas(x, z)
                 # Minimum 4px so markers stay clickable when zoomed out
                 hw = max(bw * unit_x * 0.5, 4.0)
@@ -12571,8 +12650,8 @@ class App(tk.Tk):
                         prev = slice_cells.get(key)
                         if prev is None or b in (244, 251, 252):
                             slice_cells[key] = b
-                # Exact Y-slice only â€” do NOT fall back to heightmap when
-                # empty (that made empty layers 13â€“31 look full of dirt).
+                # Exact Y-slice only — do NOT fall back to heightmap when
+                # empty (that made empty layers 13–31 look full of dirt).
                 # Surface silhouette uses heightmap when the slider is at
                 # the special "Surface" position (ty < 0).
                 if ty < 0:
@@ -12588,8 +12667,8 @@ class App(tk.Tk):
                         if cx0 <= k[0] <= cx1 and cz0 <= k[1] <= cz1
                     }
                 n_sol = len(solids)
-                # Milder subsampling â€” keep the silhouette readable.
-                # Never skip water/pad cells (a 4Ã—4 pool vanishes at step=2).
+                # Milder subsampling — keep the silhouette readable.
+                # Never skip water/pad cells (a 4×4 pool vanishes at step=2).
                 step = 1
                 if n_sol > 12000:
                     step = 2
@@ -12610,7 +12689,7 @@ class App(tk.Tk):
                         continue
                     cx, cy = world_to_canvas(ix + 0.5, iz + 0.5)
                     # Priority cells get a slightly larger min pixel so a
-                    # 4Ã—4 water pool stays obvious on a full 128Â² dirt map.
+                    # 4×4 water pool stays obvious on a full 128² dirt map.
                     if is_prio:
                         phs = max(unit_x * 0.5, 2.5)
                         pvs = max(unit_z * 0.5, 2.5)
@@ -12663,7 +12742,7 @@ class App(tk.Tk):
 
             # 2) Chests / inventories
             # Game entity Position is often 1 block "north" of the visual
-            # footprint for multi-block furniture (same issue NPCs had â€”
+            # footprint for multi-block furniture (same issue NPCs had —
             # they already use z-1). Without this, chests sit one tile too
             # high vs mannequins/props in the top-down map.
             if show_chests.get():
@@ -12746,7 +12825,7 @@ class App(tk.Tk):
                            x, y, z),
                         n, oval=True, outline="#ffffff")
 
-            # 5) Landing pad â€” entity centre, fixed 4Ã—4 footprint
+            # 5) Landing pad — entity centre, fixed 4×4 footprint
             if show_pads.get() and pads:
                 best = pads[0]
                 if len(pads) > 1:
@@ -12757,25 +12836,32 @@ class App(tk.Tk):
                 x, y, z = best["pos"]
                 add_footprint(
                     x, z, 4, 4, "#222222", "pad",
-                    "Landing pad  4Ã—4  (%.1f, %.1f, %.1f)%s"
+                    "Landing pad  4×4  (%.1f, %.1f, %.1f)%s"
                     % (x, y, z,
                        ("  [%d components, showing 1]" % len(pads)
                         if len(pads) > 1 else "")),
                     best, outline="#eeeeee")
 
             zoom_var.set("%d%%" % int(round(zmul * 100)))
-            # Highlight external focus (e.g. Show on map from NPCs)
-            lp = getattr(self, "_map_last_opened_pos", None)
-            if lp is not None:
-                hx, hz = lp
+            # Highlight external focus (e.g. Show on map from NPCs) and
+            # multi-hit Find results. _map_focus_hits is a list of
+            # (x, z, label) — when set, every hit gets a yellow ring.
+            focus_hits = getattr(self, "_map_focus_hits", None) or []
+            if not focus_hits:
+                lp = getattr(self, "_map_last_opened_pos", None)
+                if lp is not None:
+                    fl = getattr(self, "_map_focus_label", "") or ""
+                    focus_hits = [(lp[0], lp[1], fl)]
+            for hi, (hx, hz, fl) in enumerate(focus_hits):
                 cx, cy = world_to_canvas(hx, hz)
+                # Primary hit slightly thicker; others still visible
+                w = 3 if hi == 0 else 2
                 canvas.create_oval(
                     cx - 10, cy - 10, cx + 10, cy + 10,
-                    outline="#ffcc00", width=2, tags=("focus",))
-                fl = getattr(self, "_map_focus_label", "") or ""
+                    outline="#ffcc00", width=w, tags=("focus",))
                 if fl:
                     canvas.create_text(
-                        cx, cy - 14, text=fl[:40], fill="#ffcc00",
+                        cx, cy - 14, text=str(fl)[:40], fill="#ffcc00",
                         anchor="s", tags=("focus",))
 
         search_fr = ttk.Frame(dlg)
@@ -12809,6 +12895,7 @@ class App(tk.Tk):
             q = (map_q.get() or "").strip().lower()
             if not q:
                 map_search_status.set("")
+                self._map_focus_hits = []
                 return
             q_crc = None
             try:
@@ -12825,15 +12912,31 @@ class App(tk.Tk):
                     hits.append(h)
             if not hits:
                 map_search_status.set("No match")
+                self._map_focus_hits = []
                 return
-            h0 = hits[0]
+            # Ring every match; center on the first. Repeated Find advances.
+            idx = getattr(self, "_map_find_idx", 0) or 0
+            prev_q = getattr(self, "_map_find_q", None)
+            if prev_q != q:
+                idx = 0
+            else:
+                idx = (idx + 1) % len(hits)
+            self._map_find_q = q
+            self._map_find_idx = idx
+            h0 = hits[idx]
             self._map_last_opened_pos = (h0["x"], h0["z"])
             self._map_focus_label = (h0.get("label") or "")[:60]
+            self._map_focus_hits = [
+                (h["x"], h["z"], (h.get("label") or "")[:60]) for h in hits
+            ]
             redraw()
             center_on_world(h0["x"], h0["z"])
-            map_search_status.set(
-                "%d hit(s) Â· centered on first" % len(hits)
-                if len(hits) > 1 else "1 hit")
+            if len(hits) > 1:
+                map_search_status.set(
+                    "%d hit(s) · showing %d/%d (Find again for next)"
+                    % (len(hits), idx + 1, len(hits)))
+            else:
+                map_search_status.set("1 hit")
 
         map_entry.bind("<Return>", map_find)
         ttk.Button(search_fr, text="Find", command=map_find).pack(
@@ -12844,8 +12947,8 @@ class App(tk.Tk):
             map_entry.focus_set(), map_entry.selection_range(0, "end")))
 
         tip = tk.StringVar(
-            value="Hover Â· right/double-click: edit chest/sign Â· "
-                  "copy CRC for NPC/enemy/gray prop Â· Ctrl+F find")
+            value="Hover · right/double-click: edit chest/sign · "
+                  "copy CRC for NPC/enemy/gray prop · Ctrl+F find")
         ttk.Label(dlg, textvariable=tip, foreground="#444").pack(
             anchor="w", padx=8, pady=(0, 2))
 
@@ -12853,7 +12956,7 @@ class App(tk.Tk):
             """Hit-test: prefer NPCs over props when footprints overlap."""
             cx = canvas.canvasx(evt.x)
             cy = canvas.canvasy(evt.y)
-            # Later markers were drawn on top â€” scan reverse
+            # Later markers were drawn on top — scan reverse
             priority = {"npc": 0, "pad": 1, "chest": 2, "sign": 3,
                         "other": 4}
             best = None
@@ -12878,7 +12981,7 @@ class App(tk.Tk):
         def on_motion(evt):
             h = find_nearest(evt)
             tip.set(h["label"] if h else
-                    "Hover Â· right/double-click: edit chest/sign Â· "
+                    "Hover · right/double-click: edit chest/sign · "
                     "copy CRC for NPC/enemy/gray prop")
 
         def open_hit(h):
@@ -12976,13 +13079,30 @@ class App(tk.Tk):
 
                 ttk.Button(sd, text="Save", command=apply).pack(pady=8)
             elif kind in ("npc", "other"):
-                # Copy template CRC + optional "add to dictionary" dialog
+                # Copy template CRC + coords + optional "add to dictionary"
                 payload = h.get("payload") or {}
                 tmpl = payload.get("template")
+                # Prefer full (x,y,z) from payload; fall back to hit x/z
+                pos = payload.get("pos")
+                if pos is not None and len(pos) >= 3:
+                    try:
+                        px, py, pz = float(pos[0]), float(pos[1]), float(pos[2])
+                    except (TypeError, ValueError):
+                        px = float(h.get("x", 0))
+                        py = 0.0
+                        pz = float(h.get("z", 0))
+                else:
+                    px = float(h.get("x", 0))
+                    py = 0.0
+                    pz = float(h.get("z", 0))
                 if tmpl is not None:
                     tcrc = int(tmpl) & 0xFFFFFFFF
-                    nname = _entity_display_name(h.get("entity"), tmpl)
-                    text = "0x%08X\t%s\t%d" % (tcrc, nname, tcrc)
+                    nname = (_entity_display_name(
+                        payload.get("entity") or h.get("entity"), tmpl)
+                        or template_label(tcrc) or "")
+                    # e.g. 0x092AA07C<TAB>153788540 Portal Activated Volcano01 (25.5 59.0 71.5)
+                    text = "0x%08X\t%d %s (%.1f %.1f %.1f)" % (
+                        tcrc, tcrc, nname, px, py, pz)
                     try:
                         dlg.clipboard_clear()
                         dlg.clipboard_append(text)
@@ -12993,14 +13113,15 @@ class App(tk.Tk):
                     if known and not known.startswith("0x"):
                         tip.set("Copied %s" % text)
                     else:
-                        tip.set("Copied %s â€” opening name dialogâ€¦" % text)
-                        # Prompt to name unknown CRC â†’ pk_templates.json
+                        tip.set("Copied %s — opening name dialog…" % text)
+                        # Prompt to name unknown CRC → pk_templates.json
                         def _ask():
                             self.open_template_editor(
                                 preset_crc=tcrc, preset_name="")
                         dlg.after(50, _ask)
                 else:
-                    text = h.get("label") or ""
+                    text = "%s (%.1f %.1f %.1f)" % (
+                        h.get("label") or "?", px, py, pz)
                     try:
                         dlg.clipboard_clear()
                         dlg.clipboard_append(text)
@@ -13207,7 +13328,7 @@ class App(tk.Tk):
             state["zoom"] = max(0.25, min(12.0, state["zoom"] * factor))
             redraw()
 
-        ttk.Button(bf, text="Zoom âˆ’", command=lambda: zoom_btn(1 / 1.25))\
+        ttk.Button(bf, text="Zoom −", command=lambda: zoom_btn(1 / 1.25))\
             .pack(side="left")
         ttk.Button(bf, text="Zoom +", command=lambda: zoom_btn(1.25))\
             .pack(side="left", padx=4)
@@ -13225,17 +13346,17 @@ class App(tk.Tk):
                 pass
 
     def open_world_3d_preview(self):
-        """Orbitable 3D preview â€” terrain voxels + entity markers.
+        """Orbitable 3D preview — terrain voxels + entity markers.
 
         Shows BKCK blocks as coloured cubes (island shape) and props /
         bosses / pads / chests as scatter markers so sparse creative
-        worlds still read as a layout. View only â€” no edit.
+        worlds still read as a layout. View only — no edit.
         """
         path, info = self._resolve_world_path()
         if not path:
             messagebox.showinfo(
                 "No world",
-                "Select a world file first (Worlds tab or filter â†’ Worlds).")
+                "Select a world file first (Worlds tab or filter → Worlds).")
             return
         if not self._ensure_dict():
             return
@@ -13281,7 +13402,7 @@ class App(tk.Tk):
                     cells.append((lx, ly, lz, b))
                 if cells:
                     terrain_chunks[cid] = cells
-            # entities (props / bosses / pads) â€” these define shape when
+            # entities (props / bosses / pads) — these define shape when
             # voxels are almost empty (stripped creative / entity merges)
             for o in extract_world_all_templates(nodes):
                 pos = o.get("pos")
@@ -13353,7 +13474,7 @@ class App(tk.Tk):
             origins[cid] = (float(gx * 32), float(gz * 32))
 
         # Snap voxel origins toward landing-pad entity when possible
-        # (same idea as the 2D map â€” creative chunk ids alone mis-align).
+        # (same idea as the 2D map — creative chunk ids alone mis-align).
         if pad_entity_pos is not None and origins and terrain_chunks:
             best = None
             for cid, cells in terrain_chunks.items():
@@ -13455,18 +13576,18 @@ class App(tk.Tk):
                 for i, _n in _top)
         except Exception:
             _top_s = ""
-        # Top block ids (helps fix wrong colour â†’ wrong id mapping)
+        # Top block ids (helps fix wrong colour → wrong id mapping)
         _top = {}
         for _b in cells_world.values():
             _top[_b] = _top.get(_b, 0) + 1
         _top_s = ", ".join(
-            "%dÃ—%s" % (c, KNOWN_VOXEL_BLOCKS.get(i, "#%d" % i))
+            "%d×%s" % (c, KNOWN_VOXEL_BLOCKS.get(i, "#%d" % i))
             for i, c in sorted(_top.items(), key=lambda kv: -kv[1])[:5]
-        ) if _top else "â€”"
-        subtitle = "%d shell voxels Â· %d entities Â· top: %s" % (
+        ) if _top else "—"
+        subtitle = "%d shell voxels · %d entities · top: %s" % (
             n_vox, len(entity_pts), _top_s)
         if _top_s:
-            subtitle += " Â· ids " + _top_s
+            subtitle += " · ids " + _top_s
 
         dlg = tk.Toplevel(self)
         wname = resolve_world_display_name(
@@ -13475,7 +13596,7 @@ class App(tk.Tk):
             dctx=self.dctx,
             save_rows=getattr(self, "_all_saves", None),
         ) if info else os.path.basename(path)
-        dlg.title("3D preview â€” %s" % wname)
+        dlg.title("3D preview — %s" % wname)
         dlg.geometry("1000x760")
         dlg.minsize(640, 480)
 
@@ -13483,7 +13604,7 @@ class App(tk.Tk):
         top.pack(fill="x", padx=8, pady=4)
         ttk.Label(
             top,
-            text="Orbit: left-drag Â· Zoom: scroll Â· Pan: right-drag  |  %s"
+            text="Orbit: left-drag · Zoom: scroll · Pan: right-drag  |  %s"
             % subtitle,
         ).pack(side="left")
         ttk.Button(top, text="Close", command=dlg.destroy).pack(side="right")
@@ -13492,7 +13613,7 @@ class App(tk.Tk):
         legend.pack(fill="x", padx=8)
         ttk.Label(
             legend,
-            text="terrain (shell) Â· boss Â· pad Â· enemy â€” underside kept",
+            text="terrain (shell) · boss · pad · enemy — underside kept",
             foreground="#888",
         ).pack(side="left")
 
@@ -13518,7 +13639,7 @@ class App(tk.Tk):
                     c=col, marker="s", s=ms, alpha=0.95,
                     depthshade=False, linewidths=0, edgecolors="none")
 
-        # Entity markers â€” only gameplay-relevant (props already in terrain shell)
+        # Entity markers — only gameplay-relevant (props already in terrain shell)
         kind_style = {
             "boss":  ("o", "#FF4444", 40, 1.0),
             "pad":   ("D", "#FFD24A", 32, 1.0),
@@ -13590,7 +13711,7 @@ class App(tk.Tk):
         toolbar.update()
 
         self.log(
-            "3D preview: %d voxels, %d entities, %d chunk(s) â€” %s"
+            "3D preview: %d voxels, %d entities, %d chunk(s) — %s"
             % (n_vox, len(entity_pts), len(terrain_chunks),
                os.path.basename(path)))
 
@@ -13603,7 +13724,7 @@ class App(tk.Tk):
                 return
             dictpath = self.dictfile_path.get()
             if not dictpath or not os.path.isfile(dictpath):
-                # Dict not ready yet â€” try again shortly (auto-extract
+                # Dict not ready yet — try again shortly (auto-extract
                 # may still be finishing). Don't pop an error dialog.
                 self.after(800, self._autoload_characters)
                 return
@@ -13651,7 +13772,7 @@ class App(tk.Tk):
                 messagebox.showerror(
                     "No character file",
                     "Could not find 0100000000000000.\n\n"
-                    "Select it under Show â†’ Characters, then Load selected.")
+                    "Select it under Show → Characters, then Load selected.")
                 return
             path = found
             self.savefile_path.set(path)
@@ -13719,7 +13840,7 @@ class App(tk.Tk):
                 hint = ", ".join(preview) if preview else "no ascii strings"
                 rows.append((slot, e, doc, kind, None, None,
                              "(no name field; tag=%s; %s)" % (tag_s, hint[:60])))
-                self.log("  entry %d tag=%s size=%d kind=%s â€” no \\x05name\\x00 field"
+                self.log("  entry %d tag=%s size=%d kind=%s — no \\x05name\\x00 field"
                          % (e["index"], tag_s, e["size"], kind))
                 continue
             for off, length, text in fields:
@@ -13819,7 +13940,7 @@ class App(tk.Tk):
 
         Handles, uniformly, for every caller:
           - rolling backup before every write (.bak = state before this
-            edit; .bak.1 â€¦ .bak.4 keep the previous few)
+            edit; .bak.1 … .bak.4 keep the previous few)
           - an ATOMIC write: the full buffer is built in memory first,
             then written to a temp file in the same folder and swapped
             into place with os.replace(), which is atomic on both
@@ -13839,7 +13960,7 @@ class App(tk.Tk):
         never look like a corrupted save).
 
         Returns (ok, check) where check is the Container reflecting
-        what's now on disk (only meaningful data on success â€” callers
+        what's now on disk (only meaningful data on success — callers
         should still treat a False ok as "don't trust this further").
         On success self.container is updated to check.
         """
@@ -13847,7 +13968,7 @@ class App(tk.Tk):
         if not path:
             messagebox.showerror(
                 "No file",
-                "No save path set â€” cannot write.")
+                "No save path set — cannot write.")
             return False, None
         # Safety: never write a CHAR payload into a universe/world file
         info = parse_save_filename(path)
@@ -13887,7 +14008,7 @@ class App(tk.Tk):
         # then snapshot the current on-disk file as path.bak.
         #   path.bak   = state immediately before this write
         #   path.bak.1 = state before the previous write
-        #   â€¦ up to .bak.4
+        #   … up to .bak.4
         try:
             max_bak = 5
             oldest = path + ".bak.%d" % (max_bak - 1)
@@ -13913,7 +14034,7 @@ class App(tk.Tk):
             shutil.copy2(path, bak)
             self.log("Backup written: %s" % bak)
         except OSError as bex:
-            self.log("Backup failed (%s) â€” write continues" % bex)
+            self.log("Backup failed (%s) — write continues" % bex)
 
         tmp_path = path + ".tmp-%d" % os.getpid()
         try:
@@ -14183,7 +14304,7 @@ class App(tk.Tk):
         lb = tk.Listbox(dlg, font=("TkDefaultFont", 10), height=14)
         lb.pack(fill="both", expand=True, padx=10, pady=4)
         for label, _rel, local in world_saves:
-            lb.insert("end", "%s  â†’  %s" % (label, local))
+            lb.insert("end", "%s  →  %s" % (label, local))
         dest_var = tk.StringVar()
         # Default remote folder from known saves
         default_dir = ""
@@ -14223,7 +14344,7 @@ class App(tk.Tk):
             if d:
                 dest_var.set(d)
 
-        ttk.Button(row, text="Browseâ€¦", command=browse).pack(side="left")
+        ttk.Button(row, text="Browse…", command=browse).pack(side="left")
 
         status = ttk.Label(dlg, text="", foreground="#333")
         status.pack(anchor="w", padx=10)
@@ -14247,7 +14368,7 @@ class App(tk.Tk):
             # URL-encode path segments
             from urllib.parse import quote
             url = GITHUB_RAW_BASE + quote(rel, safe="")
-            status.config(text="Downloadingâ€¦")
+            status.config(text="Downloading…")
             dlg.update_idletasks()
             try:
                 import urllib.request
@@ -14262,7 +14383,7 @@ class App(tk.Tk):
                             "Bad download",
                             "Downloaded data is not a KSC1 save "
                             "(%d bytes, magic %r).\\n"
-                            "The GitHub path may be a folder â€” open the "
+                            "The GitHub path may be a folder — open the "
                             "repo and confirm the file name."
                             % (len(data), data[:4]),
                             parent=dlg)
@@ -14281,7 +14402,7 @@ class App(tk.Tk):
                 with open(dest_path, "wb") as fh:
                     fh.write(data)
                 self.log(
-                    "Installed GitHub custom save %r â†’ %s (%d bytes)"
+                    "Installed GitHub custom save %r → %s (%d bytes)"
                     % (label, dest_path, len(data)))
                 status.config(text="Installed %s (%d bytes)" % (
                     local_name, len(data)))
@@ -14326,7 +14447,7 @@ class App(tk.Tk):
         char_path = self.savefile_path.get()
         cinfo = parse_save_filename(char_path) if char_path else {}
         if cinfo.get("type") not in ("character", "character_backup"):
-            # Try to locate 0100â€¦ next to current / from scan
+            # Try to locate 0100… next to current / from scan
             found = None
             for _l, _r, _f, full, i, _m in getattr(self, "_all_saves", []):
                 if i.get("type") == "character":
@@ -14448,7 +14569,7 @@ class App(tk.Tk):
         except BsonUnknownType as exc:
             messagebox.showerror(
                 "Unknown field type",
-                "Custom BSON type 0x%02X key %r â€” see Log for details."
+                "Custom BSON type 0x%02X key %r — see Log for details."
                 % (exc.etype, exc.key))
             return
         except Exception as exc:
@@ -14463,7 +14584,7 @@ class App(tk.Tk):
             buf = bytearray(doc)
             bson_patch(buf, node, new_value)
             payload = wrap(bytes(buf), kind, self.cctx)
-            # Match by entry id â€” identity fails after the container is
+            # Match by entry id — identity fails after the container is
             # reloaded from disk (Character Editor keeps the old entry
             # dict around across edits).
             target_id = e["id"]
@@ -14947,7 +15068,7 @@ class FieldEditor(tk.Toplevel):
             if h is None:
                 messagebox.showerror(
                     "No hash",
-                    "That table row has no hash â€” cannot use it as II.",
+                    "That table row has no hash — cannot use it as II.",
                     parent=dlg)
                 return
             val_var.set("0x%08X" % h)
@@ -15087,7 +15208,7 @@ class CharacterEditor(tk.Toplevel):
         self.nodes = nodes
         self.char_path = char_path or app.savefile_path.get()
         cname = character_class_name(nodes)
-        self.title("Character Editor â€” %s" % (cname or "unknown class"))
+        self.title("Character Editor — %s" % (cname or "unknown class"))
         self.geometry("920x640")
         self.minsize(780, 520)
 
@@ -15102,9 +15223,9 @@ class CharacterEditor(tk.Toplevel):
                    command=self.reload).pack(side="left")
         ttk.Button(top, text="Max all stacks",
                    command=self.max_all_stacks).pack(side="left", padx=6)
-        ttk.Button(top, text="Edit raw fieldsâ€¦",
+        ttk.Button(top, text="Edit raw fields…",
                    command=self._open_raw_fields).pack(side="left", padx=6)
-        ttk.Label(top, text="Uses item_table_merged.json Â· unmatched "
+        ttk.Label(top, text="Uses item_table_merged.json · unmatched "
                             "items hidden from pickers",
                   foreground="#555").pack(side="right")
 
@@ -15112,7 +15233,7 @@ class CharacterEditor(tk.Toplevel):
         self.nb.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
         # Equipment (Armor / Vanity / Pets) share one top-level tab with
-        # an inner notebook â€” same pattern as Backpack / Hotbar.
+        # an inner notebook — same pattern as Backpack / Hotbar.
         self._tab_equip = ttk.Frame(self.nb)
         self._tab_stats = ttk.Frame(self.nb)
         self._tab_bags = ttk.Frame(self.nb)
@@ -15148,7 +15269,7 @@ class CharacterEditor(tk.Toplevel):
                 parent=self)
             return False
         try:
-            # Always point writes at 01â€¦ and load that container
+            # Always point writes at 01… and load that container
             if (self.app.savefile_path.get() != path
                     or self.app.container is None
                     or not any(e.get("tag") == b"CHAR"
@@ -15199,7 +15320,7 @@ class CharacterEditor(tk.Toplevel):
 
         self._build_equip_tab(self._tab_armor, "IEQ", ARMOR_SLOT_CATEGORIES,
                               include_extra_head=False)
-        # Extra Head is stored on IEQ[6], not VEQ â€” show it under Vanity
+        # Extra Head is stored on IEQ[6], not VEQ — show it under Vanity
         # by overlaying that one slot from the Armor array.
         self._build_equip_tab(self._tab_vanity, "VEQ", VANITY_SLOT_CATEGORIES,
                               include_extra_head=True,
@@ -15235,7 +15356,7 @@ class CharacterEditor(tk.Toplevel):
         else:
             ttk.Label(
                 top,
-                text="This character's class: (unknown â€” set Class on Player Stats)",
+                text="This character's class: (unknown — set Class on Player Stats)",
                 foreground="#a60",
             ).pack(side="left")
         # Only show loadouts for this class
@@ -15260,7 +15381,7 @@ class CharacterEditor(tk.Toplevel):
             cb.pack(side="left", padx=6)
             cb.bind("<<ComboboxSelected>>", lambda *_: render())
         ttk.Button(
-            top, text="Apply this buildâ€¦",
+            top, text="Apply this build…",
             command=lambda: self._apply_loadout_wizard(var.get()),
         ).pack(side="left", padx=8)
 
@@ -15465,7 +15586,7 @@ class CharacterEditor(tk.Toplevel):
 
         hdr = ttk.Frame(parent)
         hdr.pack(fill="x", padx=8, pady=6)
-        ttk.Label(hdr, text="%s â€” double-click a row or use Change to "
+        ttk.Label(hdr, text="%s — double-click a row or use Change to "
                             "pick a new item."
                             % ARRAY_LABELS.get(array_key, array_key)
                   ).pack(side="left")
@@ -15554,13 +15675,13 @@ class CharacterEditor(tk.Toplevel):
                 self.reload()
 
 
-        ttk.Button(btns, text="Change itemâ€¦",
+        ttk.Button(btns, text="Change item…",
                    command=change_selected).pack(side="left")
         ttk.Button(btns, text="Clear slot",
                    command=clear_selected).pack(side="left", padx=6)
         if array_key == "IEQ":
             ttk.Button(
-                btns, text="Apply loadoutâ€¦",
+                btns, text="Apply loadout…",
                 command=self._apply_loadout_wizard,
             ).pack(side="left", padx=12)
         tree.bind("<Double-1>", lambda _e: change_selected())
@@ -15603,11 +15724,11 @@ class CharacterEditor(tk.Toplevel):
                 detail_txt.insert("end", "No item-table entry for this item.")
             else:
                 lines = [rec.get("name") or "(unnamed)",
-                         "Category: %s" % (rec.get("category") or "â€”")]
+                         "Category: %s" % (rec.get("category") or "—")]
                 if stats["defence"] is not None:
                     lines.append("Defence: %d" % stats["defence"])
                 elif "Defence" in (stats["raw"] or ""):
-                    lines.append("Defence: â€”")
+                    lines.append("Defence: —")
                 if stats["affixes"]:
                     lines.append("Affixes:")
                     for a in stats["affixes"]:
@@ -15623,7 +15744,7 @@ class CharacterEditor(tk.Toplevel):
         """Set or insert an item into equip/bag/pet slot.
 
         arr_override: exact array node from the UI (required when multiple
-        IAB/PET/IEQ mirrors exist â€” creative Server vs Player AV/CV).
+        IAB/PET/IEQ mirrors exist — creative Server vs Player AV/CV).
         """
         if not self._ensure_char_write_target():
             return
@@ -15646,7 +15767,7 @@ class CharacterEditor(tk.Toplevel):
                 if ok:
                     self.reload()
                 return
-        # Empty slot â€“ insert into the same array the UI is showing
+        # Empty slot – insert into the same array the UI is showing
         arr = arr_override
         if arr is None:
             arr = find_normal_bag_array(
@@ -15818,9 +15939,9 @@ class CharacterEditor(tk.Toplevel):
                 on_pick=lambda rec, s=si, a=arr: self._set_equip_slot(
                     "PET", s, None, rec, arr_override=a))
 
-        ttk.Button(btns, text="Change selectedâ€¦",
+        ttk.Button(btns, text="Change selected…",
                    command=change_selected).pack(side="left")
-        ttk.Button(btns, text="Add pet / mountâ€¦",
+        ttk.Button(btns, text="Add pet / mount…",
                    command=add_new).pack(side="left", padx=6)
         tree.bind("<Double-1>", lambda _e: change_selected())
 
@@ -15895,7 +16016,7 @@ class CharacterEditor(tk.Toplevel):
 
         def soft_refresh_doc():
             """Update self.doc/nodes after a write without rebuilding the
-            whole stats UI â€” other fields the user typed stay intact.
+            whole stats UI — other fields the user typed stay intact.
             """
             try:
                 fresh = self.app.doc_for_entry_id(self.e["id"])
@@ -16062,7 +16183,7 @@ class CharacterEditor(tk.Toplevel):
                 buf = bytearray(self.doc)
                 # binary subtype layout: length already in node; patch value bytes
                 vstart = name_field["vstart"]
-                # value is length(4)+subtype(1)+payload â€” payload starts vstart+5
+                # value is length(4)+subtype(1)+payload — payload starts vstart+5
                 payload_off = vstart + 5
                 old_len = name_field["vend"] - payload_off
                 if len(padded) != old_len:
@@ -16138,7 +16259,7 @@ class CharacterEditor(tk.Toplevel):
                     "No changed Level/Coins values to write.",
                     parent=self)
                 return
-            summary = "\n".join("%s â†’ %r" % (lab, nv) for lab, _n, _t, nv in changes)
+            summary = "\n".join("%s → %r" % (lab, nv) for lab, _n, _t, nv in changes)
             if not messagebox.askyesno(
                     "Apply all",
                     "Write these fields?\n\n%s" % summary,
@@ -16157,7 +16278,7 @@ class CharacterEditor(tk.Toplevel):
         all_row = ttk.Frame(info)
         all_row.pack(fill="x", padx=6, pady=4)
         ttk.Button(
-            all_row, text="Apply all Level / Coinsâ€¦",
+            all_row, text="Apply all Level / Coins…",
             command=apply_all_numeric,
         ).pack(side="left")
         ttk.Label(
@@ -16222,7 +16343,7 @@ class CharacterEditor(tk.Toplevel):
                     parent=self)
                 return
             # apply_node reloads the Character Editor (rebuilds tabs),
-            # which destroys raw_lbl â€” do not touch widgets after that.
+            # which destroys raw_lbl — do not touch widgets after that.
             apply_node(playtime_node, "Playtime", str(secs))
 
         ttk.Button(pt_row, text="Apply", command=apply_playtime).pack(
@@ -16246,7 +16367,7 @@ class CharacterEditor(tk.Toplevel):
         if av and av.get("children"):
             for n in av["children"]:
                 if n.get("children") is not None:
-                    # nested health/mana arrays â€” key is hex of Health/Mana
+                    # nested health/mana arrays — key is hex of Health/Mana
                     label = av_label(n["key"]) if is_hex_key(n["key"]) else None
                     if label and "health" in label.lower():
                         av_arrays["health"] = n
@@ -16324,7 +16445,7 @@ class CharacterEditor(tk.Toplevel):
         talent_comp = find_component(self.nodes, "Talent Line Component")
         tbox = ttk.LabelFrame(
             outer,
-            text="Talent line%s" % (" â€” %s" % class_name if class_name else ""))
+            text="Talent line%s" % (" — %s" % class_name if class_name else ""))
         tbox.pack(fill="x", padx=8, pady=4)
         tls = None
         if talent_comp:
@@ -16427,7 +16548,7 @@ class CharacterEditor(tk.Toplevel):
         We also set effectPackageIndex when known, and copy model/texture/
         color Id *and* CRC binaries from another character in this file with
         the same class + target race when one exists. Id arrays index into
-        the CRC category lists â€” copying only Ids leaves the old race's
+        the CRC category lists — copying only Ids leaves the old race's
         categories and produces the "says Human, still looks Elf" result.
 
         There are two independent representations of the same selections:
@@ -16550,9 +16671,9 @@ class CharacterEditor(tk.Toplevel):
             self.app.log("Race donor search: %s" % ex)
 
         edits = [(race_node, new_crc)]
-        notes = ["raceCRC â†’ %s (0x%08X)" % (race_name, new_crc)]
+        notes = ["raceCRC → %s (0x%08X)" % (race_name, new_crc)]
 
-        # effectPackageIndex â€” prefer donor (class+race accurate) over the
+        # effectPackageIndex — prefer donor (class+race accurate) over the
         # coarse RACE_EFFECT_PACKAGE table (e.g. Human Warrior is 1, not 4).
         eff = kids.get("effectPackageIndex")
         if donor and eff is not None and "effectPackageIndex" in donor:
@@ -16567,11 +16688,11 @@ class CharacterEditor(tk.Toplevel):
             want_eff = RACE_EFFECT_PACKAGE.get(new_crc)
             if eff is not None and want_eff is not None:
                 edits.append((eff, int(want_eff)))
-                notes.append("effectPackageIndex â†’ %d (fallback table)" % want_eff)
+                notes.append("effectPackageIndex → %d (fallback table)" % want_eff)
 
         # Copy appearance binaries from donor when present.
         # modelIds[i] indexes into the category named by modelCRCs[i] (same
-        # for texture/color) â€” copying only the Id arrays leaves the old
+        # for texture/color) — copying only the Id arrays leaves the old
         # race's CRC categories in place and is exactly the "says Human,
         # still looks Elf" failure mode. Copy both Id and CRC arrays.
         if donor:
@@ -16584,7 +16705,7 @@ class CharacterEditor(tk.Toplevel):
                 dst_n = kids.get(key)
                 if src_n is None or dst_n is None:
                     if src_n is not None and dst_n is None:
-                        notes.append("%s present on donor but missing on target â€” skipped" % key)
+                        notes.append("%s present on donor but missing on target — skipped" % key)
                     continue
                 if not isinstance(src_n.get("value"), (bytes, bytearray)):
                     continue
@@ -16593,7 +16714,7 @@ class CharacterEditor(tk.Toplevel):
                 # Only copy when byte lengths match (avoids document-size shift)
                 if len(bytes(src_n["value"])) != len(bytes(dst_n["value"])):
                     notes.append(
-                        "%s length mismatch (donor %d vs %d) â€” skipped"
+                        "%s length mismatch (donor %d vs %d) — skipped"
                         % (key, len(bytes(src_n["value"])),
                            len(bytes(dst_n["value"]))))
                     continue
@@ -16613,7 +16734,7 @@ class CharacterEditor(tk.Toplevel):
                         if src_n is not None and dst_n is None:
                             notes.append(
                                 "SelectorCRCs.%s present on donor but "
-                                "missing on target â€” skipped" % key)
+                                "missing on target — skipped" % key)
                         continue
                     if not isinstance(src_n.get("value"), (bytes, bytearray)):
                         continue
@@ -16622,7 +16743,7 @@ class CharacterEditor(tk.Toplevel):
                     if len(bytes(src_n["value"])) != len(bytes(dst_n["value"])):
                         notes.append(
                             "SelectorCRCs.%s length mismatch (donor %d vs %d) "
-                            "â€” skipped"
+                            "— skipped"
                             % (key, len(bytes(src_n["value"])),
                                len(bytes(dst_n["value"]))))
                         continue
@@ -16642,14 +16763,14 @@ class CharacterEditor(tk.Toplevel):
             elif donor_selector and not kids_selector:
                 notes.append(
                     "donor has PlayerCustomizationSelectorCRCs but target "
-                    "does not â€” skipped selector copy")
+                    "does not — skipped selector copy")
             elif kids_selector and not donor_selector:
                 notes.append(
                     "target has PlayerCustomizationSelectorCRCs but donor "
-                    "does not â€” selector block left unchanged")
+                    "does not — selector block left unchanged")
         else:
             notes.append(
-                "No same class+race donor in this file â€” only CRC/effect "
+                "No same class+race donor in this file — only CRC/effect "
                 "updated. Appearance may still look wrong until you "
                 "re-customize in-game.")
 
@@ -16658,14 +16779,14 @@ class CharacterEditor(tk.Toplevel):
             return
         ok = self.app.commit_bson_edits(
             self.e, self.doc, self.kind, edits,
-            verify_label="race â†’ %s" % race_name)
+            verify_label="race → %s" % race_name)
         if ok:
             self.app.log("Race change: " + "; ".join(notes))
             self.reload()
         else:
             messagebox.showerror(
                 "Race change failed",
-                "Write/verify failed â€” see log. Restore .bak if needed.",
+                "Write/verify failed — see log. Restore .bak if needed.",
                 parent=self)
 
 
@@ -16809,7 +16930,7 @@ class CharacterEditor(tk.Toplevel):
             cur = bytes(dst_node["value"])
             if len(cur) != 32 or len(donor_bytes) != 32:
                 notes.append(
-                    "%s: unexpected length (want 32, got %d/%d) â€” "
+                    "%s: unexpected length (want 32, got %d/%d) — "
                     "skipped" % (label, len(cur), len(donor_bytes)))
                 return
             chunks = [bytearray(cur[i * 4:(i + 1) * 4]) for i in range(8)]
@@ -16876,7 +16997,7 @@ class CharacterEditor(tk.Toplevel):
         else:
             messagebox.showerror(
                 "Gender change failed",
-                "Write/verify failed â€” see log. Restore .bak if needed.",
+                "Write/verify failed — see log. Restore .bak if needed.",
                 parent=self)
 
 
@@ -16912,7 +17033,7 @@ class CharacterEditor(tk.Toplevel):
                      "Adventure weapons/tools are on the Hotbar tab (CV). "
                      "Armor = Equipment tab (IEQ). "
                      "Backpack is shared. "
-                     "Fly is a runtime Creative flag â€” not stored on the character.",
+                     "Fly is a runtime Creative flag — not stored on the character.",
                 foreground="#555", wraplength=720)
             note.pack(anchor="w", padx=6, pady=(6, 0))
             self._build_bag_list(frame, "IAB", slot_limit=8,
@@ -17002,7 +17123,7 @@ class CharacterEditor(tk.Toplevel):
         hdr.pack(fill="x", padx=6, pady=(6, 0))
         ttk.Label(
             hdr,
-            text="%d item%s Â· capacity %d  Â·  Ctrl+click multi-select Â· "
+            text="%d item%s · capacity %d  ·  Ctrl+click multi-select · "
                  "Del removes"
                  % (filled, "" if filled == 1 else "s", slot_limit),
         ).pack(side="left")
@@ -17020,7 +17141,7 @@ class CharacterEditor(tk.Toplevel):
         tree.pack(fill="both", expand=True, padx=6, pady=4)
 
         row_meta = {}
-        # Only list occupied slots â€” empties are not items.
+        # Only list occupied slots — empties are not items.
         for si in sorted(slots):
             if si >= slot_limit:
                 continue
@@ -17075,7 +17196,7 @@ class CharacterEditor(tk.Toplevel):
             dlg = tk.Toplevel(self)
             dlg.title("Stack slot %d (cap %d)" % (si + 1, cap))
             var = tk.StringVar(value=str(sc["value"]))
-            ttk.Label(dlg, text="New stack (1â€“%d recommended):" % cap)\
+            ttk.Label(dlg, text="New stack (1–%d recommended):" % cap)\
                 .pack(padx=10, pady=(10, 2))
             ttk.Entry(dlg, textvariable=var, width=12).pack(padx=10)
 
@@ -17088,7 +17209,7 @@ class CharacterEditor(tk.Toplevel):
                     return
                 if v < 0 or v > 65535:
                     messagebox.showerror("Out of range",
-                                         "Stack is uint16 (0â€“65535).",
+                                         "Stack is uint16 (0–65535).",
                                          parent=dlg)
                     return
                 if v > cap:
@@ -17140,13 +17261,13 @@ class CharacterEditor(tk.Toplevel):
                     self._set_equip_slot(ak, s, None, rec, arr_override=a))
 
 
-        ttk.Button(btns, text="Change itemâ€¦",
+        ttk.Button(btns, text="Change item…",
                    command=change_item).pack(side="left")
-        ttk.Button(btns, text="Edit stackâ€¦",
+        ttk.Button(btns, text="Edit stack…",
                    command=edit_stack).pack(side="left", padx=6)
         ttk.Button(btns, text="Delete selected",
                    command=delete_selected).pack(side="left", padx=6)
-        ttk.Button(btns, text="Add into empty slotâ€¦",
+        ttk.Button(btns, text="Add into empty slot…",
                    command=add_item).pack(side="left", padx=6)
         tree.bind("<Double-1>", lambda _e: change_item())
         tree.bind("<Delete>", delete_selected)
@@ -17260,8 +17381,8 @@ class CharacterEditor(tk.Toplevel):
             text="knownRecipeIds: packed recipe-ID CRCs (NOT item-table "
                  "'Recipe for X' hashes). List is sorted by name so you can "
                  "find rows. Change / Add / Remove rewrite the blob like "
-                 "inventory edits. Select an \"(unmapped) 0xâ€¦\" row and "
-                 "click \"Name unmappedâ€¦\" to pin down a name for it "
+                 "inventory edits. Select an \"(unmapped) 0x…\" row and "
+                 "click \"Name unmapped…\" to pin down a name for it "
                  "(saved to pk_recipe_id_names.json so it sticks).",
         ).pack(anchor="w", padx=8, pady=6)
 
@@ -17357,7 +17478,7 @@ class CharacterEditor(tk.Toplevel):
                     "Remove recipes",
                     "Remove %d recipe(s) from knownRecipeIds?\n\n%s"
                     % (len(indices), "\n".join(names[:12])
-                       + ("\nâ€¦" if len(names) > 12 else "")),
+                       + ("\n…" if len(names) > 12 else "")),
                     parent=self):
                 return
             self._remove_recipes_at(recipe_bin, indices)
@@ -17371,7 +17492,7 @@ class CharacterEditor(tk.Toplevel):
             if not sel or sel[0] not in row_meta:
                 messagebox.showinfo(
                     "Select a recipe",
-                    "Select an \"(unmapped) 0xâ€¦\" row first.", parent=self)
+                    "Select an \"(unmapped) 0x…\" row first.", parent=self)
                 return
             _save_idx, crc = row_meta[sel[0]]
             label = recipe_label_for_id(crc)
@@ -17386,21 +17507,21 @@ class CharacterEditor(tk.Toplevel):
 
         btns = ttk.Frame(parent)
         btns.pack(fill="x", padx=8, pady=(0, 6))
-        ttk.Button(btns, text="Changeâ€¦", command=change_recipe).pack(
+        ttk.Button(btns, text="Change…", command=change_recipe).pack(
             side="left")
-        ttk.Button(btns, text="Addâ€¦", command=add_recipe).pack(
+        ttk.Button(btns, text="Add…", command=add_recipe).pack(
             side="left", padx=6)
-        ttk.Button(btns, text="Add all knownâ€¦",
+        ttk.Button(btns, text="Add all known…",
                    command=add_all_known).pack(side="left", padx=6)
         ttk.Button(btns, text="Remove selected",
                    command=remove_selected).pack(side="left", padx=6)
-        ttk.Button(btns, text="Name unmappedâ€¦",
+        ttk.Button(btns, text="Name unmapped…",
                    command=name_unmapped).pack(side="left", padx=6)
         ttk.Button(btns, text="Copy ID", command=copy_selected).pack(
             side="left", padx=6)
         ttk.Label(
             btns,
-            text="  Double-click to change Â· Del removes Â· IDs are recipe "
+            text="  Double-click to change · Del removes · IDs are recipe "
                  "serials (not item hashes)",
             foreground="#555",
         ).pack(side="left")
@@ -17466,7 +17587,7 @@ class CharacterEditor(tk.Toplevel):
         blob = self._pack_recipe_ids(ids)
         if self.app.commit_bson_edit(
                 self.e, self.doc, self.kind, recipe_bin, blob):
-            self.app.log("Recipe slot %d â†’ 0x%08X (%s)" % (
+            self.app.log("Recipe slot %d → 0x%08X (%s)" % (
                 save_idx + 1, new_crc, recipe_label_for_id(new_crc)))
             self.reload()
 
@@ -17495,7 +17616,7 @@ class CharacterEditor(tk.Toplevel):
 
     def _add_all_known_recipes(self, recipe_bin):
         """Unlock every recipe serial this tool has a name for - the
-        built-in seed table plus anything confirmed via "Name unmappedâ€¦"
+        built-in seed table plus anything confirmed via "Name unmapped…"
         and persisted to pk_recipe_id_names.json. One rebuild/write/
         verify for the whole batch, same shape as "max all stacks",
         instead of one write per recipe.
@@ -17508,7 +17629,7 @@ class CharacterEditor(tk.Toplevel):
                 "No known recipes",
                 "No named recipe serials yet - pk_recipe_id_names.json "
                 "is empty and the built-in table has nothing either. "
-                "Use \"Name unmappedâ€¦\" to build this list up first.",
+                "Use \"Name unmapped…\" to build this list up first.",
                 parent=self)
             return
         ids = parse_recipe_ids(recipe_bin["value"])
@@ -17525,7 +17646,7 @@ class CharacterEditor(tk.Toplevel):
         preview = "\n".join(
             "0x%08X  %s" % (crc, known[crc]) for crc in to_add[:12])
         if len(to_add) > 12:
-            preview += "\nâ€¦ and %d more" % (len(to_add) - 12)
+            preview += "\n… and %d more" % (len(to_add) - 12)
         if not messagebox.askyesno(
                 "Add all known recipes",
                 "Add %d recipe(s) from pk_recipe_id_names.json that "
@@ -17540,11 +17661,11 @@ class CharacterEditor(tk.Toplevel):
                 "Added %d known recipe(s) in one write: %s"
                 % (len(to_add),
                    ", ".join("0x%08X" % c for c in to_add[:8])
-                   + ("â€¦" if len(to_add) > 8 else "")))
+                   + ("…" if len(to_add) > 8 else "")))
             self.reload()
 
     def _remove_recipes_at(self, recipe_bin, indices_desc):
-        """indices_desc: save indices sorted highâ†’low so pops stay valid."""
+        """indices_desc: save indices sorted high→low so pops stay valid."""
         if not self._ensure_char_write_target():
             return
         ids = parse_recipe_ids(recipe_bin["value"])
@@ -17561,7 +17682,7 @@ class CharacterEditor(tk.Toplevel):
             self.app.log("Removed %d recipe(s): %s" % (
                 len(removed),
                 ", ".join("0x%08X" % c for c in removed[:8])
-                + ("â€¦" if len(removed) > 8 else "")))
+                + ("…" if len(removed) > 8 else "")))
             self.reload()
 
     def _recipe_picker(self, title, on_pick, exclude=None):
@@ -17569,7 +17690,7 @@ class CharacterEditor(tk.Toplevel):
 
         Recipe serials are a different CRC space from item-table
         'Recipe for X' hashes. Only mapped serials (seed set + anything
-        confirmed via "Name this serialâ€¦") or a typed 0xâ€¦ serial can be
+        confirmed via "Name this serial…") or a typed 0x… serial can be
         written into knownRecipeIds.
         """
         dlg = tk.Toplevel(self)
@@ -17602,13 +17723,13 @@ class CharacterEditor(tk.Toplevel):
             info.config(
                 text="Mapped recipe serials only (not item-table hashes). "
                      "Clear the box to see all %d known IDs, or type part "
-                     "of a name / a raw 0xâ€¦ serial. Typed serials with no "
-                     "name yet can be labeled with \"Name this serialâ€¦\" "
+                     "of a name / a raw 0x… serial. Typed serials with no "
+                     "name yet can be labeled with \"Name this serial…\" "
                      "below." % len(names))
             lb.delete(0, "end")
             del rows[:]
             q = (qvar.get() or "").strip().lower()
-            # Raw hex serial â†’ always offer as a direct pick
+            # Raw hex serial → always offer as a direct pick
             raw_crc = None
             qs = q[2:] if q.startswith("0x") else q
             if qs and all(c in "0123456789abcdef" for c in qs) and len(qs) >= 6:
@@ -17647,11 +17768,11 @@ class CharacterEditor(tk.Toplevel):
             if n == 0:
                 status.config(
                     text="No matches among %d mapped serials. Clear the "
-                         "search or type a full 0xâ€¦ serial."
+                         "search or type a full 0x… serial."
                          % len(names))
             else:
                 status.config(
-                    text="%d match%s Â· double-click or Use selected"
+                    text="%d match%s · double-click or Use selected"
                          % (n, "" if n == 1 else "es"))
 
         def pick(_evt=None):
@@ -17680,7 +17801,7 @@ class CharacterEditor(tk.Toplevel):
         btns.pack(pady=8)
         ttk.Button(btns, text="Use selected", command=pick).pack(
             side="left")
-        name_btn = ttk.Button(btns, text="Name this serialâ€¦",
+        name_btn = ttk.Button(btns, text="Name this serial…",
                               command=name_this_serial, state="disabled")
         name_btn.pack(side="left", padx=6)
         refresh()
@@ -17732,7 +17853,7 @@ class CharacterEditor(tk.Toplevel):
                 rows.append(name)
                 lb.insert("end", name)
             status.config(
-                text="%d match%s Â· double-click / Use selected, or type "
+                text="%d match%s · double-click / Use selected, or type "
                      "an exact name and Confirm typed name"
                      % (len(rows), "" if len(rows) == 1 else "es"))
 
@@ -17777,7 +17898,7 @@ class CharacterEditor(tk.Toplevel):
             parent,
             text="Quest Component QB field: each QID is a per-island quest "
                  "graph node (not a personal log). Known names include the "
-                 "Basics / Elise / Rupert starter chain. Display only â€” "
+                 "Basics / Elise / Rupert starter chain. Display only — "
                  "the game re-evaluates quest state on load.",
             foreground="#555", wraplength=720,
         ).pack(anchor="w", padx=8, pady=6)
@@ -17867,7 +17988,7 @@ class CharacterEditor(tk.Toplevel):
                     lines.append("%+g%s" % (total, m.group(2)))
                     continue
             if n > 1:
-                lines.append("%s  Ã—%d" % (a, n))
+                lines.append("%s  ×%d" % (a, n))
             else:
                 lines.append(a)
         return lines
@@ -17894,7 +18015,7 @@ class CharacterEditor(tk.Toplevel):
         if not lo:
             messagebox.showinfo(
                 "No build",
-                "%s has no No-DLC loadout â€” need DLC for this class."
+                "%s has no No-DLC loadout — need DLC for this class."
                 % class_name, parent=self)
             return
         do_armor = messagebox.askyesno(
@@ -17903,7 +18024,7 @@ class CharacterEditor(tk.Toplevel):
             "Weapons", "Do you want weapons changed?", parent=self)
         do_talents = messagebox.askyesno(
             "Talents", "Do you want talents changed?", parent=self)
-        summary = "%s\\n\\nArmor: %s\\nWeapons: %s\\nTalents: %s\\nLevel â†’ 30" % (
+        summary = "%s\\n\\nArmor: %s\\nWeapons: %s\\nTalents: %s\\nLevel → 30" % (
             lo.get("title"), do_armor, do_weapons, do_talents)
         if not messagebox.askyesno("Confirm loadout", summary, parent=self):
             return
